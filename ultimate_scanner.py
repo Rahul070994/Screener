@@ -3722,7 +3722,7 @@ def auth(user_id):
     if not user_data:
         return "User not found", 404
     
-    redirect_url = os.getenv("REDIRECT_URL", "http://localhost:5000/api/broker/callback")
+    redirect_url = os.getenv("REDIRECT_URL", "https://rahulintratrading.online/api/broker/callback")
     kite = KiteConnect(api_key=user_data["kite_api_key"])
     
     session['redirect_url'] = redirect_url
