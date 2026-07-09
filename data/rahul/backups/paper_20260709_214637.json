@@ -1,0 +1,31 @@
+{
+  "wallet": 10000.0,
+  "pinned": [
+    "SAIL"
+  ],
+  "pinned_meta": {
+    "SAIL": {
+      "direction": "BUY",
+      "recommendation": "BUY",
+      "score": 108.2
+    }
+  },
+  "positions": {},
+  "orders": [],
+  "trades": [],
+  "daily_pnl": {},
+  "signal_logs": [],
+  "strategy_performance": {},
+  "circuit_breaker": {
+    "triggered": false,
+    "time": null,
+    "reason": null
+  },
+  "daily_stats": {
+    "date": "2026-07-09",
+    "pnl": 0.0,
+    "trades": 0,
+    "wins": 0,
+    "losses": 0
+  }
+}

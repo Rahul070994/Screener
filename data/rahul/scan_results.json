@@ -1,0 +1,382 @@
+{
+  "BUY_SETUP": [
+    {
+      "symbol": "SAIL",
+      "price": 167.16,
+      "change": 2.7,
+      "volume": 713464,
+      "avg_volume": 217789,
+      "buy_score": 70.8,
+      "sell_score": 1.6,
+      "buy5_score": 64.0,
+      "sell5_score": 4.0,
+      "buy15_score": 81.1,
+      "sell15_score": -2.1,
+      "htf_align": true,
+      "composite_score": 108.2,
+      "direction": "BUY",
+      "recommendation": "BUY",
+      "buy_pct": 100.0,
+      "sell_pct": 0.0,
+      "soft_b": 3,
+      "soft_s": 1,
+      "signal_count": 4,
+      "strategies": [
+        "BUY_SETUP",
+        "BB_BREAKOUT_BUY",
+        "BB_SQUEEZE_BUY",
+        "ADX_TREND_BUY"
+      ],
+      "indicators": {
+        "rsi": 74.8,
+        "adx": 47.2,
+        "htf_rsi": 68.0,
+        "htf_adx": 67.9,
+        "atr_pct": 0.3
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.58,
+      "already_pinned": false,
+      "gap_pct": 2.7,
+      "vol_ratio": 3.28
+    }
+  ],
+  "BB_BREAKOUT_BUY": [
+    {
+      "symbol": "SAIL",
+      "price": 167.16,
+      "change": 2.7,
+      "volume": 713464,
+      "avg_volume": 217789,
+      "buy_score": 70.8,
+      "sell_score": 1.6,
+      "buy5_score": 64.0,
+      "sell5_score": 4.0,
+      "buy15_score": 81.1,
+      "sell15_score": -2.1,
+      "htf_align": true,
+      "composite_score": 108.2,
+      "direction": "BUY",
+      "recommendation": "BUY",
+      "buy_pct": 100.0,
+      "sell_pct": 0.0,
+      "soft_b": 3,
+      "soft_s": 1,
+      "signal_count": 4,
+      "strategies": [
+        "BUY_SETUP",
+        "BB_BREAKOUT_BUY",
+        "BB_SQUEEZE_BUY",
+        "ADX_TREND_BUY"
+      ],
+      "indicators": {
+        "rsi": 74.8,
+        "adx": 47.2,
+        "htf_rsi": 68.0,
+        "htf_adx": 67.9,
+        "atr_pct": 0.3
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.58,
+      "already_pinned": false,
+      "gap_pct": 2.7,
+      "vol_ratio": 3.28
+    }
+  ],
+  "BB_SQUEEZE_BUY": [
+    {
+      "symbol": "SAIL",
+      "price": 167.16,
+      "change": 2.7,
+      "volume": 713464,
+      "avg_volume": 217789,
+      "buy_score": 70.8,
+      "sell_score": 1.6,
+      "buy5_score": 64.0,
+      "sell5_score": 4.0,
+      "buy15_score": 81.1,
+      "sell15_score": -2.1,
+      "htf_align": true,
+      "composite_score": 108.2,
+      "direction": "BUY",
+      "recommendation": "BUY",
+      "buy_pct": 100.0,
+      "sell_pct": 0.0,
+      "soft_b": 3,
+      "soft_s": 1,
+      "signal_count": 4,
+      "strategies": [
+        "BUY_SETUP",
+        "BB_BREAKOUT_BUY",
+        "BB_SQUEEZE_BUY",
+        "ADX_TREND_BUY"
+      ],
+      "indicators": {
+        "rsi": 74.8,
+        "adx": 47.2,
+        "htf_rsi": 68.0,
+        "htf_adx": 67.9,
+        "atr_pct": 0.3
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.58,
+      "already_pinned": false,
+      "gap_pct": 2.7,
+      "vol_ratio": 3.28
+    }
+  ],
+  "ADX_TREND_BUY": [
+    {
+      "symbol": "SAIL",
+      "price": 167.16,
+      "change": 2.7,
+      "volume": 713464,
+      "avg_volume": 217789,
+      "buy_score": 70.8,
+      "sell_score": 1.6,
+      "buy5_score": 64.0,
+      "sell5_score": 4.0,
+      "buy15_score": 81.1,
+      "sell15_score": -2.1,
+      "htf_align": true,
+      "composite_score": 108.2,
+      "direction": "BUY",
+      "recommendation": "BUY",
+      "buy_pct": 100.0,
+      "sell_pct": 0.0,
+      "soft_b": 3,
+      "soft_s": 1,
+      "signal_count": 4,
+      "strategies": [
+        "BUY_SETUP",
+        "BB_BREAKOUT_BUY",
+        "BB_SQUEEZE_BUY",
+        "ADX_TREND_BUY"
+      ],
+      "indicators": {
+        "rsi": 74.8,
+        "adx": 47.2,
+        "htf_rsi": 68.0,
+        "htf_adx": 67.9,
+        "atr_pct": 0.3
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.58,
+      "already_pinned": false,
+      "gap_pct": 2.7,
+      "vol_ratio": 3.28
+    }
+  ],
+  "MACD_BEARISH": [
+    {
+      "symbol": "NMDC",
+      "price": 84.25,
+      "change": 0.54,
+      "volume": 739742,
+      "avg_volume": 217737,
+      "buy_score": -13.6,
+      "sell_score": 76.2,
+      "buy5_score": -16.0,
+      "sell5_score": 99.0,
+      "buy15_score": -10.0,
+      "sell15_score": 42.0,
+      "htf_align": true,
+      "composite_score": 88.6,
+      "direction": "SELL",
+      "recommendation": "SELL",
+      "buy_pct": 0.0,
+      "sell_pct": 100.0,
+      "soft_b": 0,
+      "soft_s": 4,
+      "signal_count": 2,
+      "strategies": [
+        "MACD_BEARISH",
+        "VWAP_REJECTION_SELL"
+      ],
+      "indicators": {
+        "rsi": 41.3,
+        "adx": 17.7,
+        "htf_rsi": 45.5,
+        "htf_adx": 19.8,
+        "atr_pct": 0.18
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.5,
+      "already_pinned": false,
+      "gap_pct": 0.54,
+      "vol_ratio": 3.4
+    }
+  ],
+  "VWAP_REJECTION_SELL": [
+    {
+      "symbol": "NMDC",
+      "price": 84.25,
+      "change": 0.54,
+      "volume": 739742,
+      "avg_volume": 217737,
+      "buy_score": -13.6,
+      "sell_score": 76.2,
+      "buy5_score": -16.0,
+      "sell5_score": 99.0,
+      "buy15_score": -10.0,
+      "sell15_score": 42.0,
+      "htf_align": true,
+      "composite_score": 88.6,
+      "direction": "SELL",
+      "recommendation": "SELL",
+      "buy_pct": 0.0,
+      "sell_pct": 100.0,
+      "soft_b": 0,
+      "soft_s": 4,
+      "signal_count": 2,
+      "strategies": [
+        "MACD_BEARISH",
+        "VWAP_REJECTION_SELL"
+      ],
+      "indicators": {
+        "rsi": 41.3,
+        "adx": 17.7,
+        "htf_rsi": 45.5,
+        "htf_adx": 19.8,
+        "atr_pct": 0.18
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.5,
+      "already_pinned": false,
+      "gap_pct": 0.54,
+      "vol_ratio": 3.4
+    }
+  ],
+  "SELL_SETUP": [
+    {
+      "symbol": "HINDZINC",
+      "price": 528.0,
+      "change": -0.89,
+      "volume": 58536,
+      "avg_volume": 24712,
+      "buy_score": -1.4,
+      "sell_score": 48.4,
+      "buy5_score": -10.0,
+      "sell5_score": 61.0,
+      "buy15_score": 11.5,
+      "sell15_score": 29.5,
+      "htf_align": true,
+      "composite_score": 86.5,
+      "direction": "SELL",
+      "recommendation": "NEUTRAL",
+      "buy_pct": 0.0,
+      "sell_pct": 100.0,
+      "soft_b": 0,
+      "soft_s": 3,
+      "signal_count": 3,
+      "strategies": [
+        "SELL_SETUP",
+        "MACD_FAST_BEAR",
+        "ADX_TREND_SELL"
+      ],
+      "indicators": {
+        "rsi": 40.3,
+        "adx": 38.9,
+        "htf_rsi": 44.3,
+        "htf_adx": 54.0,
+        "atr_pct": 0.17
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.49,
+      "already_pinned": false,
+      "gap_pct": -0.89,
+      "vol_ratio": 2.37
+    }
+  ],
+  "MACD_FAST_BEAR": [
+    {
+      "symbol": "HINDZINC",
+      "price": 528.0,
+      "change": -0.89,
+      "volume": 58536,
+      "avg_volume": 24712,
+      "buy_score": -1.4,
+      "sell_score": 48.4,
+      "buy5_score": -10.0,
+      "sell5_score": 61.0,
+      "buy15_score": 11.5,
+      "sell15_score": 29.5,
+      "htf_align": true,
+      "composite_score": 86.5,
+      "direction": "SELL",
+      "recommendation": "NEUTRAL",
+      "buy_pct": 0.0,
+      "sell_pct": 100.0,
+      "soft_b": 0,
+      "soft_s": 3,
+      "signal_count": 3,
+      "strategies": [
+        "SELL_SETUP",
+        "MACD_FAST_BEAR",
+        "ADX_TREND_SELL"
+      ],
+      "indicators": {
+        "rsi": 40.3,
+        "adx": 38.9,
+        "htf_rsi": 44.3,
+        "htf_adx": 54.0,
+        "atr_pct": 0.17
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.49,
+      "already_pinned": false,
+      "gap_pct": -0.89,
+      "vol_ratio": 2.37
+    }
+  ],
+  "ADX_TREND_SELL": [
+    {
+      "symbol": "HINDZINC",
+      "price": 528.0,
+      "change": -0.89,
+      "volume": 58536,
+      "avg_volume": 24712,
+      "buy_score": -1.4,
+      "sell_score": 48.4,
+      "buy5_score": -10.0,
+      "sell5_score": 61.0,
+      "buy15_score": 11.5,
+      "sell15_score": 29.5,
+      "htf_align": true,
+      "composite_score": 86.5,
+      "direction": "SELL",
+      "recommendation": "NEUTRAL",
+      "buy_pct": 0.0,
+      "sell_pct": 100.0,
+      "soft_b": 0,
+      "soft_s": 3,
+      "signal_count": 3,
+      "strategies": [
+        "SELL_SETUP",
+        "MACD_FAST_BEAR",
+        "ADX_TREND_SELL"
+      ],
+      "indicators": {
+        "rsi": 40.3,
+        "adx": 38.9,
+        "htf_rsi": 44.3,
+        "htf_adx": 54.0,
+        "atr_pct": 0.17
+      },
+      "p6_buy": true,
+      "p6_sell": false,
+      "htf_bull": 0.49,
+      "already_pinned": false,
+      "gap_pct": -0.89,
+      "vol_ratio": 2.37
+    }
+  ]
+}

@@ -67,3 +67,1535 @@
 2026-07-09 17:38:48,684 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 17:38:48] "GET /market-indices HTTP/1.1" 200 -
 2026-07-09 17:39:45,915 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 17:39:45] "GET /paper/summary HTTP/1.1" 200 -
 2026-07-09 17:39:48,999 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 17:39:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:48:10,709 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 20:48:10,714 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 20:48:45,904 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:48:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:48:45,909 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:48:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:49:45,677 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:49:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:49:45,981 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:49:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:50:07,283 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:07] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 20:50:07,307 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:07] "GET /login HTTP/1.1" 200 -
+2026-07-09 20:50:23,215 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:23] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 20:50:23,270 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:23] "[32mGET /auth/rahul HTTP/1.1[0m" 302 -
+2026-07-09 20:50:45,992 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:50:46,101 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:50:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:51:45,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:51:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:51:45,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:51:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:52:20,184 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:52:20,208 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:20] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:52:24,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:52:28,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:28] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:52:34,651 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:52:44,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:52:54,661 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:52:58,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:52:58] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:53:04,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:53:04] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:53:14,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:53:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:53:45,696 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:53:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:53:45,996 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:53:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:54:45,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:54:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:54:45,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:54:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:55:45,659 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:55:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:55:45,996 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:55:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:56:16,081 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:56:16,083 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:56:24,648 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:56:34,986 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:56:44,660 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:56:48,962 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:56:54,643 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:56:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:57:06,040 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 20:57:06,040 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 20:57:06,203 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:57:14,600 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:57:16,552 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:16] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 20:57:16,591 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:16] "GET /login HTTP/1.1" 200 -
+2026-07-09 20:57:18,266 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:18] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 20:57:18,367 - ultimate_scanner - ERROR - Exception on /auth/rahul [GET]
+Traceback (most recent call last):
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 2190, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1486, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1484, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1469, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+  File "C:\Users\rahul\OneDrive\Desktop\Screener\ultimate_scanner.py", line 3570, in auth
+    login_url = kite.login_url(redirect_url=redirect_url)
+TypeError: KiteConnect.login_url() got an unexpected keyword argument 'redirect_url'
+2026-07-09 20:57:18,379 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:18] "[35m[1mGET /auth/rahul HTTP/1.1[0m" 500 -
+2026-07-09 20:57:18,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:57:45,668 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:57:48,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:57:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:57:54,429 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 20:57:54,429 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 20:58:01,033 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:01] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 20:58:01,055 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:01] "GET /login HTTP/1.1" 200 -
+2026-07-09 20:58:02,931 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:02] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 20:58:03,044 - ultimate_scanner - ERROR - Exception on /auth/rahul [GET]
+Traceback (most recent call last):
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 2190, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1486, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1484, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1469, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+  File "C:\Users\rahul\OneDrive\Desktop\Screener\ultimate_scanner.py", line 3570, in auth
+    login_url = kite.login_url(redirect_url=redirect_url)
+TypeError: KiteConnect.login_url() got an unexpected keyword argument 'redirect_url'
+2026-07-09 20:58:03,060 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:03] "[35m[1mGET /auth/rahul HTTP/1.1[0m" 500 -
+2026-07-09 20:58:18,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:58:46,055 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 20:58:48,941 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:58:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:59:18,629 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:59:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 20:59:46,023 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 20:59:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:00:23,829 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 21:00:23,829 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 21:00:34,081 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:34] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 21:00:34,089 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:34] "GET /login HTTP/1.1" 200 -
+2026-07-09 21:00:43,815 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:43] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 21:00:43,967 - ultimate_scanner - ERROR - Exception on /auth/rahul [GET]
+Traceback (most recent call last):
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 2190, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1486, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1484, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1469, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+  File "C:\Users\rahul\OneDrive\Desktop\Screener\ultimate_scanner.py", line 3571, in auth
+    kite = KiteConnect(api_key=user_data["kite_api_key"], redirect_url=redirect_url)
+TypeError: KiteConnect.__init__() got an unexpected keyword argument 'redirect_url'
+2026-07-09 21:00:43,972 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:43] "[35m[1mGET /auth/rahul HTTP/1.1[0m" 500 -
+2026-07-09 21:00:45,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:00:46,035 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:00:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:02:03,600 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 21:02:03,600 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 21:02:11,044 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:11] "GET /login HTTP/1.1" 200 -
+2026-07-09 21:02:12,435 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:12] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 21:02:12,444 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:12] "[32mGET /auth/rahul HTTP/1.1[0m" 302 -
+2026-07-09 21:02:36,501 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 21:02:36,507 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:36] "[32mGET /api/broker/callback?request_token=wncTOK5eHJDx4at81aR6stBmR7hwkDpK&action=login&type=login&status=success HTTP/1.1[0m" 302 -
+2026-07-09 21:02:36,669 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 21:02:36,683 - __main__ - INFO - Monitor started
+2026-07-09 21:02:36,690 - __main__ - INFO - Fast exit loop started
+2026-07-09 21:02:36,690 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 21:02:36,755 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:36] "GET / HTTP/1.1" 200 -
+2026-07-09 21:02:37,547 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 21:02:37,547 - __main__ - INFO - SectorMonitor started
+2026-07-09 21:02:37,761 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:37] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:02:40,644 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:40] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:02:42,379 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:42] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:02:46,075 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:02:47,388 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:02:49,183 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:02:52,367 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:02:53,244 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:02:57,687 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:02:57] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:00,661 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:02,377 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:02] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:07,694 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:10,681 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:10] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:12,360 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:12] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:17,695 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:17] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:20,667 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:20,695 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:20] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:03:22,677 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:22] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:22,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:22] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:03:27,695 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:27] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:30,333 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:32,694 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:32] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:37,701 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:37] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:38,126 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:38] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:03:39,495 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:39] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:03:40,253 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:40] "GET /paper/trades HTTP/1.1" 200 -
+2026-07-09 21:03:40,371 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:40] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:42,700 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:42] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:42,939 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:42] "GET /paper/trades HTTP/1.1" 200 -
+2026-07-09 21:03:45,667 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:46,804 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:46] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:03:47,676 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:47,768 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:47] "GET /paper/trades HTTP/1.1" 200 -
+2026-07-09 21:03:48,145 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:48] "GET /paper/trades HTTP/1.1" 200 -
+2026-07-09 21:03:49,046 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:49,210 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:03:52,703 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:03:52,993 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:52] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:03:53,115 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:03:57,676 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:03:57] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:00,676 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:02,376 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:02] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:07,677 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:10,664 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:10] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:11,279 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:11] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:04:12,705 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:12] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:12,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:12] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:04:16,446 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:16,845 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:16] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:04:20,355 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:31,054 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:31] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:40,760 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:40] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:45,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:48,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:04:49,045 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:49] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:04:49,056 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:04:53,095 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:04:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:05:00,745 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:05:11,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:05:18,972 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:05:19,353 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:19] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:05:20,735 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:05:45,974 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:05:48,645 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:05:49,028 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:49] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:05:49,058 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:05:53,094 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:05:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:06:18,654 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:06:19,045 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:19] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:06:45,983 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:06:48,758 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:06:48,975 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:06:49,366 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:49] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:06:52,776 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:06:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:07:18,970 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:19,226 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:19] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:07:38,763 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:38] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:39,146 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:39] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:07:42,200 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:42] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:07:44,079 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:44] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:44,346 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:44] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:07:45,646 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:47,730 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:48,115 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:48] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:07:49,058 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:07:49,706 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:49] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:07:49,911 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:49] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:07:53,075 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:07:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:00,751 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:11,068 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:20,751 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:20,944 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:20] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:21,339 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:21] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:08:30,728 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:34,894 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:34] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:35,145 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:35] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:08:39,895 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:39] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:40,278 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:40] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:08:40,309 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:40] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:41,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:41] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:08:44,594 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:44] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:45,960 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:49,060 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:49,927 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:49] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:50,842 - __main__ - INFO - Scanner locked to 2026-07-09 21:05 for 183 stocks  |  RATE_SLEEP=0.67s
+2026-07-09 21:08:50,843 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:50] "POST /scanner/start HTTP/1.1" 200 -
+2026-07-09 21:08:52,860 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:08:53,151 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:08:54,329 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:08:54,645 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:54] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:08:55,752 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:08:57,661 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:08:59,014 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:08:59] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:00,934 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:00] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:09:00,947 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:01,228 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:01] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:01,948 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:01] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:03,667 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:04,944 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:04] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:06,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:07,950 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:07] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:09,654 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:10,968 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:10] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:11,068 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:12,978 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:13,669 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:13] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:15,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:16,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:16] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:18,666 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:20,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:21,047 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:21] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:22,047 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:22] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:22,647 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:22] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:24,972 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:25,692 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:25] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:27,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:27] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:28,742 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:28] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:30,945 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:30] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:31,066 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:31] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:32,077 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:32] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:09:32,079 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:32] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:33,643 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:33] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:35,099 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:36,694 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:36] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:38,167 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:38] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:39,724 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:40,956 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:40] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:41,256 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:41] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:42,955 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:42] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:43,644 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:43] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:46,067 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:09:46,151 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:46,643 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:48,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:48] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:49,259 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:49,899 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:51,660 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:51] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:52,947 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:53,343 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:09:55,077 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:55,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:58,173 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:58] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:09:58,678 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:09:58] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:10:00,989 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:10:01,387 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:01] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:10:01,986 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:10:31,698 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:10:45,989 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:10:46,213 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:10:49,094 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:10:53,110 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:10:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:11:02,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:02] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:11:31,648 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:11:45,997 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:11:45,998 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:11:49,093 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:11:53,201 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:11:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:12:01,953 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:12:42,927 - __main__ - INFO - Scan complete: 93 candidates in 232.0s, 0 errors
+2026-07-09 21:12:45,670 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:12:45,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:12:46,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:12:46,495 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:46] "GET /paper/scan-pinnable HTTP/1.1" 200 -
+2026-07-09 21:12:49,103 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:12:53,110 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:12:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:13:45,758 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:13:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:13:46,211 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:13:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:13:49,132 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:13:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:13:53,161 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:13:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:14:45,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:14:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:14:46,052 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:14:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:14:49,067 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:14:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:14:53,095 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:14:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:15:45,962 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:15:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:15:46,322 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:15:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:15:48,754 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:15:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:15:52,797 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:15:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:16:45,957 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:16:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:16:46,330 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:16:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:16:48,734 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:16:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:16:52,779 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:16:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:17:45,962 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:17:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:17:46,341 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:17:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:17:48,781 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:17:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:17:52,823 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:17:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:18:45,650 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:18:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:18:46,018 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:18:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:18:49,065 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:18:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:18:53,086 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:18:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:19:46,030 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:19:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:19:46,446 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:19:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:19:48,778 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:19:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:19:52,829 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:19:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:20:45,665 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:20:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:20:46,053 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:20:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:20:49,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:20:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:20:53,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:20:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:21:45,672 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:21:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:21:46,035 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:21:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:21:49,084 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:21:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:21:53,141 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:21:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:22:45,655 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:22:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:22:46,033 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:22:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:22:49,047 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:22:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:22:53,057 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:22:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:23:45,977 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:23:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:23:46,369 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:23:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:23:48,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:23:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:23:52,786 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:23:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:24:45,663 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:24:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:24:46,040 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:24:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:24:49,094 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:24:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:24:53,118 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:24:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:25:45,956 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:25:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:25:46,342 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:25:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:25:48,732 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:25:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:25:52,794 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:25:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:26:45,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:26:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:26:46,351 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:26:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:26:48,735 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:26:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:26:52,766 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:26:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:27:45,657 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:27:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:27:46,038 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:27:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:27:49,073 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:27:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:27:53,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:27:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:04,187 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 21:30:04,189 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 21:30:07,294 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:07,330 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:07] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:08,491 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:08] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 21:30:08,797 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:08] "GET /login HTTP/1.1" 200 -
+2026-07-09 21:30:10,984 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:10] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 21:30:11,070 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 21:30:11,070 - __main__ - INFO - Monitor started
+2026-07-09 21:30:11,072 - __main__ - INFO - Fast exit loop started
+2026-07-09 21:30:11,072 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 21:30:11,351 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 21:30:11,387 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:11] "GET / HTTP/1.1" 200 -
+2026-07-09 21:30:11,653 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 21:30:11,669 - __main__ - INFO - SectorMonitor started
+2026-07-09 21:30:11,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:14,752 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:16,932 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:21,978 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:24,750 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:26,973 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:30,193 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:30] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:32,033 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:32] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:35,082 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:35] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:36,652 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:41,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:42,608 - __main__ - INFO - Scanner locked to 2026-07-09 21:30 for 1800 stocks  |  RATE_SLEEP=0.67s
+2026-07-09 21:30:42,608 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:42] "POST /scanner/start HTTP/1.1" 200 -
+2026-07-09 21:30:44,598 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:44] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:45,084 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:46,084 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:46,191 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:46,632 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:47,641 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:47] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:49,115 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:49,215 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:50,715 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:50] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:52,130 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:52,231 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:53,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:53] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:54,748 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:30:55,005 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:56,531 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:56] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:56,889 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:30:57,665 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:30:59,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:30:59] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:00,681 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:01,957 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:02,642 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:02] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:04,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:04] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:05,047 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:05] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:06,025 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:06,322 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:06,747 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:09,157 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:10,646 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:10] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:11,252 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:11,466 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:11] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:13,013 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:13] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:14,497 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:14,779 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:16,219 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:16] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:16,231 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:17,195 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:19,144 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:19] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:20,195 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:21,198 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:22,243 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:22] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:22,292 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:22] "POST /scanner/stop HTTP/1.1" 200 -
+2026-07-09 21:31:23,281 - __main__ - INFO - Scan complete: 0 candidates in 40.7s, 0 errors
+2026-07-09 21:31:24,161 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:24,553 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:24] "GET /paper/scan-pinnable HTTP/1.1" 200 -
+2026-07-09 21:31:24,746 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:26,214 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:30,879 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:30] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:33,089 - __main__ - INFO - Scanner locked to 2026-07-09 21:30 for 100 stocks  |  RATE_SLEEP=0.67s
+2026-07-09 21:31:33,091 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:33] "POST /scanner/start HTTP/1.1" 200 -
+2026-07-09 21:31:35,016 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:35,083 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:35] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:36,304 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:36,614 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:36] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:37,670 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:37] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:39,546 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:40,707 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:40] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:41,317 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:42,639 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:42] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:44,196 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:44] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:44,742 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:45,554 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:45,782 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:46,069 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:46,645 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:48,463 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:48] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:49,180 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:49,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:50,917 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:50] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:51,477 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:51] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:52,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:54,475 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:54,945 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:31:55,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:56,209 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:31:57,182 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:31:59,100 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:31:59] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:00,210 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:01,197 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:02,127 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:02] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:03,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:04,744 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:04] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:05,196 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:05] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:06,188 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:06,471 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:07,740 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:07] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:09,574 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:10,692 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:10] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:11,192 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:12,562 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:14,057 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:14,741 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:15,580 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:15,897 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:15] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:17,100 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:18,246 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:20,058 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:20,879 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:20] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:21,559 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:21] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:22,675 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:22] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:24,476 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:24,797 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:26,028 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:26] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:26,246 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:27,165 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:27] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:28,969 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:28] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:30,285 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:30] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:31,202 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:32,098 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:32] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:33,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:33] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:34,726 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:35,060 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:36,177 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:36,455 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:36] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:37,660 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:37] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:39,596 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:40,644 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:40] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:41,357 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:42,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:42] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:43,952 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:43] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:44,883 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:45,494 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:45,729 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:45,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:46,822 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:48,613 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:48] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:49,045 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:49,977 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:50,990 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:50] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:51,475 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:51] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:52,677 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:54,461 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:54,846 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:32:55,951 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:55] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:56,179 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:32:57,354 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:32:58,986 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:32:58] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:00,188 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:01,191 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:02,131 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:02] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:03,609 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:04,777 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:04] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:05,126 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:05] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:06,357 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:06,461 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:07,840 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:07] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:09,521 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:10,744 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:10] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:11,334 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:12,611 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:14,128 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:14,736 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:15,502 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:15,879 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:15] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:17,185 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:18,145 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:20,084 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:20,887 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:20] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:21,519 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:21] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:22,691 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:22] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:24,481 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:24,819 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:26,006 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:26] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:26,330 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:27,176 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:27] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:29,122 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:29] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:30,294 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:30] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:31,211 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:32,188 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:32] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:33,472 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:33] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:34,884 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:35,008 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:36,323 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:36,477 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:36] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:37,723 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:37] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:39,585 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:40,644 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:40] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:41,205 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:42,477 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:42] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:43,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:43] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:44,936 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:45,483 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:45,748 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:45,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:46,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:48,483 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:48] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:49,052 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:49,893 - __main__ - INFO - Scan complete: 3 candidates in 136.8s, 0 errors
+2026-07-09 21:33:49,971 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:33:50,231 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:50] "GET /paper/scan-pinnable HTTP/1.1" 200 -
+2026-07-09 21:33:50,885 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:50] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:33:55,052 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:55] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:33:55,878 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:33:55] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:01,213 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:04,735 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:04] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:06,193 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:10,898 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:10] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:15,082 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:15] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:15,284 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:15] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:25,055 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:25] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:34,711 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:45,064 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:45,668 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:46,939 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:49,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:34:53,843 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:34:55,063 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:34:55] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:00,661 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:00] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:35:01,889 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:35:05,252 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:05] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:16,083 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:25,725 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:25] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:33,654 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:35:36,037 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:45,655 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:35:46,030 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:50,103 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:35:55,744 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:35:55] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:36:03,649 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:36:06,060 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:36:34,196 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:34] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:36:46,088 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:36:48,840 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:36:52,881 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:36:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:37:03,640 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:37:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:37:33,951 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:37:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:37:45,982 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:37:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:37:48,738 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:37:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:37:52,807 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:37:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:38:03,652 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:38:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:38:45,944 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:38:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:38:46,230 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:38:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:38:49,032 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:38:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:38:53,065 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:38:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:39:45,955 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:39:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:39:46,208 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:39:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:39:49,036 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:39:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:39:53,093 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:39:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:40:45,952 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:40:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:40:46,227 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:40:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:40:49,024 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:40:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:40:53,056 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:40:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:41:45,977 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:41:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:41:46,226 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:41:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:41:49,085 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:41:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:41:53,134 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:41:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:42:45,972 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:42:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:42:46,241 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:42:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:42:49,057 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:42:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:42:53,092 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:42:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:43:26,870 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 21:43:26,871 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 21:43:31,836 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:31,836 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:31] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:43:32,947 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:32] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 21:43:33,260 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:33] "GET /login HTTP/1.1" 200 -
+2026-07-09 21:43:35,684 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:35] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 21:43:35,754 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 21:43:35,756 - __main__ - INFO - Monitor started
+2026-07-09 21:43:35,756 - __main__ - INFO - Fast exit loop started
+2026-07-09 21:43:35,756 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 21:43:35,996 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 21:43:36,034 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:36] "GET / HTTP/1.1" 200 -
+2026-07-09 21:43:36,243 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 21:43:36,245 - __main__ - INFO - SectorMonitor started
+2026-07-09 21:43:36,549 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:39,370 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:43:41,549 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:45,659 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:46,550 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:47,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:47] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:43:49,063 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:43:51,258 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:51,955 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:51] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:43:52,999 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:52] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:43:53,109 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:43:56,649 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:43:59,666 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:43:59] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:01,232 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:02,017 - __main__ - INFO - Scanner locked to 2026-07-09 21:40 for 100 stocks  |  RATE_SLEEP=0.67s
+2026-07-09 21:44:02,017 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:02] "POST /scanner/start HTTP/1.1" 200 -
+2026-07-09 21:44:03,605 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:05,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:05] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:06,566 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:06,970 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:08,420 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:08] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:09,371 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:09,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:11,099 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:11] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:11,744 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:12,582 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:14,398 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:15,603 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:16,751 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:17,082 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:18,909 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:19,833 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:20,399 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:21,383 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:21,915 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:21] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:23,099 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:23] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:24,921 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:26,249 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:26] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:26,822 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:27,982 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:27] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:29,565 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:29] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:29,698 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:29] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:31,098 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:31] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:31,301 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:32,598 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:32] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:33,582 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:33] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:35,465 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:36,715 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:37,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:37] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:38,465 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:38] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:39,417 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:39,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:41,298 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:41] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:41,648 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:43,031 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:43] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:44,146 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:44] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:45,969 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:45,979 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:46,280 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:47,457 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:47] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:49,075 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:49] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:49,316 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:50,098 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:50] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:51,573 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:51,917 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:51] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:53,361 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:44:53,415 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:53] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:54,931 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:56,108 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:56] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:56,831 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:44:57,590 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:59,499 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:59] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:44:59,739 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:44:59] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:00,915 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:00] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:01,425 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:02,398 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:02] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:03,581 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:05,414 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:05] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:06,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:06,915 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:08,422 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:08] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:09,531 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:09,920 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:11,398 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:11] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:11,552 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:12,676 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:14,414 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:15,605 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:16,664 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:17,097 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:18,914 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:19,781 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:20,582 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:21,254 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:21,914 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:21] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:23,197 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:23] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:24,931 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:24] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:26,114 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:26] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:26,664 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:27,596 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:27] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:29,612 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:29] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:29,833 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:29] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:31,064 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:31] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:31,268 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:32,587 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:32] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:33,580 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:33] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:35,463 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:35] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:36,564 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:37,029 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:37] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:38,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:38] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:39,364 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:39,914 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:39] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:41,097 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:41] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:41,697 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:42,602 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:42] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:44,446 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:44] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:45,602 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:45] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:45,968 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:46,630 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:47,402 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:47] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:48,913 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:48] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:49,147 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:50,405 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:50] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:51,646 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:51,947 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:51] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:53,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:45:53,563 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:53] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:54,914 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:56,214 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:56] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:56,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:45:57,997 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:57] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:59,463 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:59] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:45:59,689 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:45:59] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:01,012 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:01] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:01,292 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:02,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:02] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:03,602 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:03] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:05,479 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:05] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:06,565 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:06,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:08,529 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:08] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:09,346 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:09,994 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:09] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:11,098 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:11] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:11,563 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:12,622 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:12] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:14,542 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:14] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:15,606 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:15] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:16,562 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:17,251 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:17] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:18,908 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:18] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:19,067 - __main__ - INFO - Scan complete: 3 candidates in 137.0s, 0 errors
+2026-07-09 21:46:19,696 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:20,411 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:20] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:46:20,668 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:20] "GET /paper/scan-pinnable HTTP/1.1" 200 -
+2026-07-09 21:46:21,246 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:26,570 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:27,838 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:27] "POST /paper/pin HTTP/1.1" 200 -
+2026-07-09 21:46:28,196 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:28] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:29,684 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:29] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:31,569 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:36,555 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:37,675 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:37] "POST /paper/pin HTTP/1.1" 200 -
+2026-07-09 21:46:39,362 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:41,561 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:45,662 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:46,564 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:46:49,079 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:53,105 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:46:53,327 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:46:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:47:00,070 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:09,735 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:20,227 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:24,651 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:47:30,050 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:39,770 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:45,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:47:49,080 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:53,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:47:54,961 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:47:54] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:48:24,662 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:48:45,951 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:48:49,092 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:48:53,144 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:48:54,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:54] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:48:56,738 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:48:59,022 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:59] "POST /paper/pin HTTP/1.1" 200 -
+2026-07-09 21:48:59,395 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:48:59] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:00,148 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:00,808 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:00] "POST /paper/pin HTTP/1.1" 200 -
+2026-07-09 21:49:01,055 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:01,708 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:06,801 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:09,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:11,575 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:11] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:49:12,029 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:12] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:12,286 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:12] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:49:13,712 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:13] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:49:16,811 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:17,033 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:17] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:49:19,666 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:21,719 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:26,808 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:29,669 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:29] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:31,719 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:36,821 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:39,685 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:41,702 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:45,952 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:46,702 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:49,052 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:49:52,952 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:49:53,076 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:49:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:00,032 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:00] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:09,731 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:09] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:20,076 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:20] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:24,626 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:50:30,063 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:39,738 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:45,950 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:50:49,068 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:53,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:50:54,978 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:50:54] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:51:24,659 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:51:45,442 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 21:51:45,447 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 21:51:45,900 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:51:45,922 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:51:46,158 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:51:47,941 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:51:48,246 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:51:50,029 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:50] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 21:51:50,039 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:50] "GET /login HTTP/1.1" 200 -
+2026-07-09 21:51:52,222 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:52] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 21:51:52,445 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 21:51:52,446 - __main__ - INFO - Monitor started
+2026-07-09 21:51:52,447 - __main__ - INFO - Fast exit loop started
+2026-07-09 21:51:52,447 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 21:51:52,692 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 21:51:52,732 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:52] "GET / HTTP/1.1" 200 -
+2026-07-09 21:51:53,381 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 21:51:53,383 - __main__ - INFO - SectorMonitor started
+2026-07-09 21:51:53,536 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:51:54,873 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:54] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:51:56,522 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:51:58,470 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:51:58] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:03,453 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:06,236 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:08,473 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:08] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:13,469 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:13] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:16,186 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:18,452 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:23,474 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:26,209 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:26,469 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:26] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:52:28,452 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:28] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:33,477 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:36,190 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:38,469 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:38] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:42,053 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:42] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:43,655 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:43] "GET /paper/orders HTTP/1.1" 200 -
+2026-07-09 21:52:45,680 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:46,401 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:46] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 21:52:46,485 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:47,118 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:48,739 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:48] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 21:52:50,559 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:52,369 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:52:56,167 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:52:57,384 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:52:57] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:53:00,938 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:00] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:53:07,105 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:07] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:16,766 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:27,065 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:27] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:32,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:32] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:53:37,053 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:37] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:45,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:53:46,767 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:50,835 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:53:56,728 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:53:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:02,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:02] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:03,892 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:05,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:05] "GET / HTTP/1.1" 200 -
+2026-07-09 21:54:06,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:06,225 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:06] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-07-09 21:54:08,325 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:08] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:10,796 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:10] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:11,360 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:11,531 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:11] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 21:54:16,096 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:19,213 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:19,946 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:19] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:30,093 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:35,116 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:35] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:37,843 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:37] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 21:54:39,145 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:40,413 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:40] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:45,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:49,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:53,127 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:54:53,419 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:58,374 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:58] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:54:59,175 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:54:59] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:03,698 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:55:08,684 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:08] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:55:08,873 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:08] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:13,688 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:13] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:55:18,873 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:18] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:30,069 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:30] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:39,792 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:39] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:45,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:55:48,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:55:49,061 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:53,108 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:55:59,737 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:55:59] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:56:10,028 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:10] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:56:18,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:56:19,797 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:19] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:56:45,996 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:56:48,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:56:49,089 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:56:53,130 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:56:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:57:18,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:57:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:57:45,958 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:57:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:57:48,688 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:57:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:57:49,063 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:57:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:57:53,088 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:57:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:58:18,640 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:58:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:58:45,946 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:58:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:58:49,142 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:58:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:58:53,145 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:58:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:59:45,971 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:59:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:59:46,234 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:59:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 21:59:49,065 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:59:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 21:59:53,088 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 21:59:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:00:45,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:00:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:00:46,216 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:00:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:00:49,061 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:00:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:00:53,100 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:00:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:01:45,959 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:01:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:01:46,233 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:01:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:01:49,074 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:01:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:01:53,088 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:01:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:02:45,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:02:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:02:46,211 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:02:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:02:49,048 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:02:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:02:53,080 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:02:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:03:45,978 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:03:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:03:46,218 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:03:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:03:49,053 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:03:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:03:53,067 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:03:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:04:45,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:04:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:04:46,221 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:04:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:04:49,079 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:04:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:04:53,137 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:04:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:05:46,067 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:05:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:05:46,310 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:05:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:05:49,179 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:05:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:05:53,218 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:05:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:06:45,981 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:06:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:06:46,226 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:06:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:06:49,081 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:06:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:06:53,113 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:06:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:07:46,008 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:07:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:07:46,288 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:07:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:07:49,114 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:07:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:07:53,155 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:07:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:08:45,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:08:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:08:46,214 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:08:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:08:49,080 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:08:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:08:53,109 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:08:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:09:45,988 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:09:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:09:46,219 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:09:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:09:49,061 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:09:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:09:53,100 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:09:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:10:46,031 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:10:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:10:46,265 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:10:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:10:49,129 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:10:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:10:53,154 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:10:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:11:46,004 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:11:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:11:46,245 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:11:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:11:49,083 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:11:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:11:53,123 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:11:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:12:45,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:12:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:12:46,222 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:12:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:12:49,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:12:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:12:53,134 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:12:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:13:46,006 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:13:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:13:46,233 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:13:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:13:49,096 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:13:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:13:53,109 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:13:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:14:45,984 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:14:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:14:46,237 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:14:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:14:49,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:14:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:14:53,130 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:14:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:15:45,986 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:15:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:15:46,220 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:15:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:15:49,073 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:15:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:15:53,147 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:15:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:16:45,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:16:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:16:46,225 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:16:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:16:49,101 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:16:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:16:53,132 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:16:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:17:46,419 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 22:17:46,421 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 22:17:47,157 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:17:47,160 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:17:48,308 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:48] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 22:17:48,607 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:48] "GET /login HTTP/1.1" 200 -
+2026-07-09 22:17:48,983 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:48] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:17:53,530 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:53] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 22:17:53,622 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:17:53,624 - __main__ - INFO - Monitor started
+2026-07-09 22:17:53,624 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:17:53,624 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:17:54,309 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 22:17:54,365 - ultimate_scanner - ERROR - Exception on / [GET]
+Traceback (most recent call last):
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 2190, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1486, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1484, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\app.py", line 1469, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+  File "C:\Users\rahul\OneDrive\Desktop\Screener\ultimate_scanner.py", line 3911, in index
+    return render_template_string(HTML,
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\templating.py", line 163, in render_template_string
+    return _render(app, template, context)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "<template>", line 174, in top-level template code
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\jinja2\filters.py", line 1721, in do_tojson
+    return htmlsafe_json_dumps(value, dumps=dumps, **kwargs)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\jinja2\utils.py", line 669, in htmlsafe_json_dumps
+    dumps(obj, **kwargs)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\json\provider.py", line 180, in dumps
+    return json.dumps(obj, **kwargs)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\json\__init__.py", line 238, in dumps
+    **kw).encode(obj)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 199, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 257, in iterencode
+    return _iterencode(o, 0)
+  File "C:\Users\rahul\AppData\Local\Programs\Python\Python310\lib\site-packages\flask\json\provider.py", line 120, in _default
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+TypeError: Object of type function is not JSON serializable
+2026-07-09 22:17:54,510 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:54] "[35m[1mGET / HTTP/1.1[0m" 500 -
+2026-07-09 22:17:54,980 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:17:54] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:18:45,709 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 22:18:45,709 - __main__ - INFO - SectorMonitor started
+2026-07-09 22:18:46,030 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:18:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:18:48,825 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:18:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:19:45,987 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:19:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:19:49,166 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:19:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:19:57,946 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 22:19:57,948 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 22:20:01,558 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:01] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 22:20:01,566 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:01] "GET /login HTTP/1.1" 200 -
+2026-07-09 22:20:02,998 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:02] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 22:20:03,224 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:20:03,227 - __main__ - INFO - Monitor started
+2026-07-09 22:20:03,228 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:20:03,228 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:20:03,467 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 22:20:03,512 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:03] "GET / HTTP/1.1" 200 -
+2026-07-09 22:20:04,091 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 22:20:04,093 - __main__ - INFO - SectorMonitor started
+2026-07-09 22:20:04,248 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:04] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:07,215 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:07] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:08,932 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:08] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:14,241 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:14] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:17,192 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:18,935 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:24,484 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:27,688 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:27] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:37,755 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:37] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:45,679 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:48,069 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:52,103 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:20:55,960 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:55] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:20:57,788 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:20:57] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:04,408 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:04] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:21:07,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:07] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:08,111 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:08] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:21:10,192 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:10] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:21:17,775 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:28,072 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:28] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:37,752 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:37] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:40,960 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:40] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:21:45,960 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:21:47,756 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:51,768 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:51] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:21:57,764 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:21:57] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:22:08,024 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:08] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:22:10,651 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:10] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:22:41,132 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:22:45,666 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:22:49,054 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:22:53,120 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:22:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:23:10,637 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:10] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:23:41,343 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:23:46,715 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 22:23:46,715 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 22:23:46,926 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:23:46,928 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:23:47,183 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:23:49,419 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:49] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:23:50,847 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:50] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 22:23:50,856 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:50] "GET /login HTTP/1.1" 200 -
+2026-07-09 22:23:52,549 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:52] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 22:23:52,750 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:23:52,752 - __main__ - INFO - Monitor started
+2026-07-09 22:23:52,753 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:23:52,753 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:23:52,975 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 22:23:53,009 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:53] "GET / HTTP/1.1" 200 -
+2026-07-09 22:23:53,492 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 22:23:53,492 - __main__ - INFO - SectorMonitor started
+2026-07-09 22:23:53,574 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:23:56,600 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:23:58,197 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:23:58] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:01,242 - __main__ - INFO - PaperTradingEngine stopped
+2026-07-09 22:24:01,243 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:01] "POST /api/user/update-strategy HTTP/1.1" 200 -
+2026-07-09 22:24:02,345 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:24:02,345 - __main__ - INFO - Monitor started
+2026-07-09 22:24:02,345 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:24:02,345 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:24:02,384 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:02] "GET / HTTP/1.1" 200 -
+2026-07-09 22:24:02,900 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:02] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:05,621 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:05] "GET /paper/signal-logs?date=2026-07-09 HTTP/1.1" 200 -
+2026-07-09 22:24:05,750 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:05] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:06,515 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:06] "GET /scanner/status HTTP/1.1" 200 -
+2026-07-09 22:24:07,587 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:12,908 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:12] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:16,030 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:17,594 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:17] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:22,760 - __main__ - WARNING - Monitor thread dead, restarting...
+2026-07-09 22:24:22,760 - __main__ - INFO - Monitor started
+2026-07-09 22:24:22,900 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:22] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:26,120 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:28,125 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:28] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:33,058 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:36,274 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:38,657 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:38] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:24:45,648 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:46,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:47,033 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:47] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:24:50,109 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:24:56,057 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:24:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:05,745 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:05] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:16,082 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:19,661 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:19] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:25:26,442 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:35,766 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:35] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:45,679 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:25:46,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:25:49,670 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:49] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:25:50,081 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:25:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:20,054 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:20] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:26,803 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 22:26:26,803 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 22:26:31,807 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:31,807 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:31] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:32,526 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:32] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:35,558 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:35] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 22:26:35,566 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:35] "GET /login HTTP/1.1" 200 -
+2026-07-09 22:26:37,412 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:37] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 22:26:37,617 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:26:37,618 - __main__ - INFO - Monitor started
+2026-07-09 22:26:37,619 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:26:37,619 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:26:37,855 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 22:26:37,903 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:37] "GET / HTTP/1.1" 200 -
+2026-07-09 22:26:38,437 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 22:26:38,437 - __main__ - INFO - SectorMonitor started
+2026-07-09 22:26:38,602 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:38] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:41,521 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:41] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:43,110 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:43] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:45,967 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:48,104 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:26:49,056 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:53,121 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:26:53,121 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:26:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:01,941 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:01] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:04,080 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:04] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:27:07,515 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:11,251 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:17,190 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:17] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:21,234 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:21] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:22,185 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:22] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:26,882 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:31,302 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:31,950 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:31] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:34,296 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:34] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:27:36,324 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:41,308 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:41,705 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:41] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:46,117 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:46,737 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:49,382 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:51,274 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:27:53,353 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:27:56,285 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:27:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:01,396 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:01,983 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:01] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:06,252 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:11,383 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:11,919 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:11] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:16,417 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:21,404 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:21,880 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:21] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:22,215 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:22] "GET / HTTP/1.1" 200 -
+2026-07-09 22:28:23,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:23] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:28:23,203 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:26,108 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:27,899 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:27] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:33,292 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:36,632 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:38,285 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:38] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:43,441 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:43] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:46,309 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:46,789 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:48,369 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:50,715 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:53,382 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:28:56,750 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:28:58,328 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:28:58] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:03,336 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:06,515 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:08,418 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:08] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:13,413 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:13] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:16,708 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:18,264 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:18] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:23,581 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:26,835 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:28,398 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:28] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:32,999 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:32] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:29:33,325 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:36,631 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:38,329 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:38] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:43,332 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:43] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:45,726 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:46,437 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:48,298 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:50,577 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:53,313 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:29:56,664 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:29:57,897 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:29:57] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:03,345 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:06,548 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:07,857 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:13,297 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:13] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:16,580 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:17,815 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:17] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:23,475 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:26,697 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:27,814 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:27] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:33,299 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:36,478 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:37,888 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:37] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:43,307 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:43] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:45,897 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:46,858 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:48,246 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:48] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:50,714 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:53,301 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:30:56,484 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:30:57,857 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:30:57] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:03,322 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:06,447 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:07,916 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:07] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:13,345 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:13] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:16,655 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:19,010 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:19] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:25,823 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:25] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:31:27,402 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:27] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:36,000 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:36] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:31:37,086 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:37] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:45,715 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:47,387 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:50,730 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:50] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:31:50,987 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:50] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:31:51,307 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:51] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:31:57,037 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:31:57] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:06,734 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:17,042 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:19,211 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:19] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:32:24,107 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:24] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:32:26,183 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:29,603 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:29] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:32:36,522 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:45,662 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:32:47,085 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:51,097 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:51] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:32:56,794 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:32:56] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:33:03,960 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:33:07,062 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:07] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:33:16,703 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:16] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:33:27,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:27] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:33:33,638 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:33:46,010 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:33:49,029 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:33:53,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:33:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:34:03,955 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:34:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:34:33,643 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:34:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:34:45,979 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:34:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:34:49,059 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:34:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:34:53,092 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:34:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:35:03,981 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:35:03] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:35:33,634 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:35:33] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:35:45,977 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:35:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:35:49,035 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:35:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:35:53,080 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:35:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:36:45,964 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:36:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:36:46,261 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:36:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:36:49,029 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:36:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:36:53,077 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:36:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:37:45,953 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:37:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:37:46,207 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:37:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:37:49,043 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:37:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:37:53,062 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:37:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:38:45,987 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:38:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:38:46,225 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:38:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:38:49,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:38:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:38:53,126 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:38:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:39:45,963 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:39:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:39:46,236 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:39:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:39:49,062 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:39:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:39:53,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:39:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:40:45,972 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:40:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:40:46,227 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:40:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:40:49,070 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:40:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:40:53,103 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:40:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:41:45,954 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:41:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:41:46,221 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:41:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:41:49,028 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:41:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:41:53,056 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:41:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:42:45,988 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:42:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:42:46,232 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:42:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:42:49,061 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:42:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:42:53,116 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:42:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:43:45,965 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:43:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:43:46,219 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:43:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:43:49,072 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:43:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:43:53,125 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:43:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:44:45,978 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:44:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:44:46,500 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:44:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:44:49,051 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:44:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:44:53,084 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:44:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:45:45,950 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:45:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:45:46,197 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:45:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:45:49,051 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:45:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:45:53,081 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:45:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:46:45,992 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:46:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:46:46,232 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:46:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:46:49,092 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:46:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:46:53,144 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:46:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:47:45,968 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:47:46,206 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:47:49,056 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:49] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:47:52,485 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:52] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:47:53,089 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:53] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:47:57,150 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:47:57] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:06,742 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:17,064 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:23,939 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:48:26,726 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:26] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:37,071 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:37] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:45,973 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:48:46,744 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:46] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:50,795 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:50] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:48:53,656 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:48:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:49:23,944 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:49:23] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:49:45,975 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:49:45] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:49:48,769 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:49:48] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:49:52,814 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:49:52] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:49:53,658 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:49:53] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:50:14,834 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:14] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:50:17,966 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:50:19,473 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:19] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:50:22,269 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:22] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:50:27,165 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:27] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:50:36,730 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:36] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:50:47,045 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:47] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:50:51,653 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:50:57,064 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:50:57] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:51:06,726 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:06] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:51:17,077 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:17] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:51:21,662 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:51:43,813 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.7:5000
+2026-07-09 22:51:43,813 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-07-09 22:51:45,913 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:45] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:51:46,359 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:51:48,110 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:48] "[32mGET / HTTP/1.1[0m" 302 -
+2026-07-09 22:51:48,135 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:48] "GET /login HTTP/1.1" 200 -
+2026-07-09 22:51:48,376 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:48] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:51:50,219 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:50] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-07-09 22:51:50,312 - __main__ - INFO - PaperTradingEngine initialized
+2026-07-09 22:51:50,314 - __main__ - INFO - Monitor started
+2026-07-09 22:51:50,314 - __main__ - INFO - Fast exit loop started
+2026-07-09 22:51:50,314 - __main__ - INFO - PaperTradingEngine started
+2026-07-09 22:51:50,589 - __main__ - INFO - Instrument cache loaded: 9732 stocks
+2026-07-09 22:51:50,639 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:50] "GET / HTTP/1.1" 200 -
+2026-07-09 22:51:50,698 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:50] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-07-09 22:51:51,382 - __main__ - INFO - SectorMonitor initialized
+2026-07-09 22:51:51,384 - __main__ - INFO - SectorMonitor started
+2026-07-09 22:51:51,511 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:51:54,498 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:51:56,089 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:51:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:01,393 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:01] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:04,466 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:04] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:06,095 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:06] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:11,476 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:11] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:14,440 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:14] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:16,525 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:16] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:17,987 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:17] "POST /api/backtest/run HTTP/1.1" 200 -
+2026-07-09 22:52:21,383 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:21] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:24,457 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:24] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:26,078 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:26] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:31,391 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:31] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:34,508 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:34] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:36,091 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:36] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:41,391 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:41] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:44,491 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:44] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:46,075 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:46] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:51,395 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:51] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:52:54,461 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:54] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:52:56,652 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:52:56] "GET /paper/summary HTTP/1.1" 200 -
+2026-07-09 22:53:05,094 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:53:05] "GET /market-indices HTTP/1.1" 200 -
+2026-07-09 22:53:14,754 - werkzeug - INFO - 127.0.0.1 - - [09/Jul/2026 22:53:14] "GET /market-indices HTTP/1.1" 200 -

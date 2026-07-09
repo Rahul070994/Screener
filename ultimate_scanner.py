@@ -1,36 +1,19 @@
-# ultimate_scanner.py  ─ v9.2  DYNAMIC SIZING + SECTOR CORRELATION + L2 SLIPPAGE
-# CHANGES in v9.2:
-#   • DYNAMIC POSITION SIZING (NEW):
-#     Quantity now driven by ATR-based risk model: risk 1% of wallet per trade.
-#     qty = min(margin_cap, wallet×0.01 / (ATR×1.5))
-#     Eliminates "bet everything on one size" bias; position scales with volatility.
-#   • SECTOR CORRELATION SCORING (NEW):
-#     Before entry, checks if the stock's sector (from SECTOR_MAP) is
-#     bullish or bearish (SectorMonitor updates a shared cache every 60 s).
-#     Sector tailwind  → +6 pts on aligned side.
-#     Sector headwind  → −6 pts on opposing side.
-#     Buys in crashing sectors and shorts in surging sectors are naturally penalised.
-#   • ORDER BOOK / L2 SLIPPAGE (NEW):
-#     Entry fill price uses kite.quote() depth data to read the actual best
-#     ask (for BUY) or best bid (for SELL), computing dynamic spread-based
-#     slippage instead of a flat 0.1%.  Falls back to flat slippage on API error.
-#     Actual slippage % is stored in the position record for post-trade analysis.
-# ── All v9.1 features retained ──────────────────────────────────────────────
-# CHANGES in v9.1  (strategies.py v4.1 required):
-#   • MIN_SIGNAL_SCORE  28.0  → 35.0   (was too low, producing noisy trades)
-#   • MIN_VOTE_PCT      48.0  → 50.0   (majority vote — clean 50% threshold)
-#   • DUAL CONFLICT PROTECTION: ST AND HTF-15m both opposing → threshold 42.
-#   • VOL_PROFILE_POC: wick confirmation ≥30% of bar.
-#   • All v9.0 features retained (advisory ST, advisory HTF, batch LTP, slots).
-
+# ultimate_scanner.py  ─ v9.7  FIXED BACKTEST UI PERSISTENCE
+# ============================================================
+# CHANGES in v9.7:
+#   • Backtest UI no longer resets on tab refresh.
+#   • Running status and results are preserved in global JS variables.
+#   • Progress spinner stays visible until API responds.
+#   • Results are shown even after switching tabs.
+# All other features remain unchanged.
 # ============================================================
 
 from kiteconnect import KiteConnect
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
-import webbrowser, os, time, json, threading, sys
-from flask import Flask, render_template_string, request, jsonify
+import webbrowser, os, time, json, threading, sys, importlib
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from markupsafe import escape
 import warnings, traceback, shutil, glob
 from collections import deque
@@ -40,16 +23,36 @@ from threading import Lock
 import hashlib
 warnings.filterwarnings('ignore')
 
-from strategies import all_strategies
+# ── Encryption ──────────────────────────────────────────────
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+load_dotenv()
 
-if sys.platform == 'win32':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+def get_cipher():
+    master_key = os.getenv("MASTER_SECRET_KEY")
+    if not master_key:
+        raise ValueError("MASTER_SECRET_KEY not set in .env file")
+    try:
+        return Fernet(master_key.encode())
+    except Exception:
+        import base64
+        key = base64.urlsafe_b64encode(hashlib.sha256(master_key.encode()).digest())
+        return Fernet(key)
 
-# ==================== LOGGING ====================
+def encrypt_secret(plain_text):
+    return get_cipher().encrypt(plain_text.encode()).decode()
+
+def decrypt_secret(cipher_text):
+    return get_cipher().decrypt(cipher_text.encode()).decode()
+
+# ── Strategy Registry ──────────────────────────────────────
+import strategies
+AVAILABLE_STRATEGIES = strategies.STRATEGY_REGISTRY
+
+# ── Logging ──────────────────────────────────────────────
 def setup_logging():
     log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler = RotatingFileHandler('alpha_scanner.log', maxBytes=10*1024*1024, backupCount=5)
+    file_handler = logging.handlers.RotatingFileHandler('alpha_scanner.log', maxBytes=10*1024*1024, backupCount=5)
     file_handler.setFormatter(log_formatter)
     file_handler.setLevel(logging.INFO)
     console_handler = logging.StreamHandler()
@@ -65,13 +68,6 @@ logger = setup_logging()
 
 # ==================== RATE LIMITER ====================
 class RateLimiter:
-    """
-    Token-bucket style rate limiter.
- 
-    Defaults reflect the tightest Zerodha limit (Quote = 1 req/sec).
-    Pass different values when constructing limiters for other endpoints.
-    """
- 
     def __init__(self, max_calls_per_second=1, max_calls_per_minute=55):
         self.max_per_second = max_calls_per_second
         self.max_per_minute = max_calls_per_minute
@@ -83,49 +79,28 @@ class RateLimiter:
     def wait(self, caller_info=""):
         with self.lock:
             now = time.time()
- 
-            # Expire old timestamps
             while self.calls_second and now - self.calls_second[0] > 1:
                 self.calls_second.popleft()
             while self.calls_minute and now - self.calls_minute[0] > 60:
                 self.calls_minute.popleft()
- 
-            # Per-second gate
             if len(self.calls_second) >= self.max_per_second:
                 sleep_time = 1.0 - (now - self.calls_second[0])
                 if sleep_time > 0:
-                    # CHANGED: logger.warning -> logger.debug to stop log spam
                     logger.debug(f"Throttling {caller_info} for {sleep_time:.3f}s")
                     time.sleep(sleep_time)
                     now = time.time()
- 
-            # Per-minute gate
             if len(self.calls_minute) >= self.max_per_minute:
                 sleep_time = 60.0 - (now - self.calls_minute[0])
                 if sleep_time > 0:
-                    logger.warning(
-                        f"Rate limit (minute) hit — sleeping {sleep_time:.2f}s  [{caller_info}]"
-                    )
+                    logger.warning(f"Rate limit (minute) hit — sleeping {sleep_time:.2f}s  [{caller_info}]")
                     time.sleep(sleep_time)
                     now = time.time()
- 
             self.calls_second.append(time.time())
             self.calls_minute.append(time.time())
             self.total_calls += 1
 
-# ──────────────────────────────────────────────────────────────
-# Replace the module-level rate-limiter instances with correctly
-# tuned ones.  Put these lines right after the class definition
-# (where the originals were created) in ultimate_scanner.py.
-# ──────────────────────────────────────────────────────────────
- 
-# Quote endpoint  →  1 req/sec
 _quote_limiter = RateLimiter(max_calls_per_second=1, max_calls_per_minute=55)
- 
-# Historical-candle endpoint  →  3 req/sec
 _hist_limiter  = RateLimiter(max_calls_per_second=3, max_calls_per_minute=170)
- 
-# Everything else (margins, instruments, profile …)  →  10 req/sec
 _other_limiter = RateLimiter(max_calls_per_second=9, max_calls_per_minute=550)
 
 # ==================== JSON ENCODER ====================
@@ -145,16 +120,20 @@ class DateTimeEncoder(json.JSONEncoder):
 
 # ==================== CONFIGURATION ====================
 class Config:
-    def __init__(self):
-        self.API_KEY = os.getenv("KITE_API_KEY")
-        self.API_SECRET = os.getenv("KITE_API_SECRET")
-        self.TOKEN_FILE = "access_token.txt"
-        self.PAPER_FILE = "paper_trading.json"
-        self.PAPER_BACKUP_DIR = "backups"
-        self.RATE_LIMIT = 0.1
+    def __init__(self, user_id=None):
+        self.user_id = user_id
+        if user_id:
+            self.data_dir = f"data/{user_id}"
+        else:
+            self.data_dir = "."
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.TOKEN_FILE = os.path.join(self.data_dir, "access_token.txt")
+        self.PAPER_FILE = os.path.join(self.data_dir, "paper_trading.json")
+        self.SCAN_FILE = os.path.join(self.data_dir, "scan_results.json")
+        self.USER_CONFIG_FILE = os.path.join(self.data_dir, "user_config.json")
+        self.PAPER_BACKUP_DIR = os.path.join(self.data_dir, "backups")
         os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
-
-config = Config()
+        self.RATE_LIMIT = 0.1
 
 # ==================== CONSTANTS ====================
 HEAVYWEIGHTS = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','HINDUNILVR',
@@ -185,10 +164,7 @@ PRIORITY_SYMBOLS = [
     'PAYTM','CARTRADE','EASEMYTRIP','RATEGAIN','SBICARD',
 ]
 
-# ── Nifty 200 constituents (NSE official list, ~200 most liquid large+midcap) ─
-# Scan time: ~200 stocks × 0.67s = ~2.2 minutes. Ideal for pre-market & intraday.
 NIFTY200_SYMBOLS = [
-    # Nifty 50
     'RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','HINDUNILVR','ITC','KOTAKBANK',
     'SBIN','BHARTIARTL','LT','WIPRO','HCLTECH','AXISBANK','ASIANPAINT','MARUTI',
     'SUNPHARMA','TITAN','BAJFINANCE','NESTLEIND','POWERGRID','NTPC','ULTRACEMCO',
@@ -196,7 +172,6 @@ NIFTY200_SYMBOLS = [
     'TATASTEEL','ADANIPORTS','COALINDIA','DRREDDY','DIVISLAB','CIPLA','EICHERMOT',
     'HEROMOTOCO','GRASIM','BRITANNIA','BPCL','SHREECEM','M&M','APOLLOHOSP',
     'BAJAJ-AUTO','ADANIENT','SBILIFE','HDFCLIFE','TATACONSUM','UPL',
-    # Nifty Next 50
     'HAVELLS','PIDILITIND','BERGEPAINT','TORNTPHARM','MUTHOOTFIN','CHOLAFIN',
     'PERSISTENT','LTIM','COFORGE','OFSS','MPHASIS','ZOMATO','DMART','INDIGO',
     'IRCTC','PNB','BANKBARODA','CANBK','UNIONBANK','IDFCFIRSTB','FEDERALBNK',
@@ -205,7 +180,6 @@ NIFTY200_SYMBOLS = [
     'PAGEIND','DLF','GODREJPROP','OBEROIRLTY','PRESTIGE',
     'SAIL','NMDC','HINDZINC','NATIONALUM','VEDL','JINDALSTEL',
     'MOTHERSON','BOSCHLTD','BHARATFORG','APOLLOTYRE','BALKRISIND','MRF',
-    # Nifty Midcap 100 (top liquid midcaps)
     'AUROPHARMA','LUPIN','BIOCON','ALKEM','IPCALAB','LALPATHLAB',
     'MANAPPURAM','PNBHOUSING','MCDOWELL-N','UBL','RADICO',
     'GLOBALHEALTH','MAXHEALTH','FORTIS',
@@ -226,7 +200,6 @@ NIFTY200_SYMBOLS = [
     'HONAUT','ABB','SIEMENS','BHEL','CGPOWER',
     'JINDALSAW','RATNAMANI','WELCORP','APL','GHCL',
 ]
-# Deduplicate while preserving order
 _seen = set()
 NIFTY200_SYMBOLS = [s for s in NIFTY200_SYMBOLS if not (s in _seen or _seen.add(s))]
 
@@ -237,35 +210,27 @@ SELL_KW = ['SELL','BEAR','DEATH','EVENING','CROWS','CLOUD','OVERBOUGHT',
            'REVERSAL','BREAKDOWN','RESISTANCE','SHOOTING_STAR',
            'LIQUIDITY_SWEEP_SELL','ORDER_FLOW_SELL','ANCHORED_VWAP_SELL','VOL_PROFILE_POC_SELL']
 
-# ── High-trust strategy names that get an extra scoring bonus ──────────────
 HIGH_TRUST_STRATEGIES = {
-    'LIQUIDITY_SWEEP_BUY', 'LIQUIDITY_SWEEP_SELL',   # 88%
-    'ORDER_FLOW_BUY',      'ORDER_FLOW_SELL',         # 85%
-    'ANCHORED_VWAP_BUY',   'ANCHORED_VWAP_SELL',     # 87%
-    'VOL_PROFILE_POC_BUY', 'VOL_PROFILE_POC_SELL',   # 86%
-    'EMA_CLUSTER_BUY',     'EMA_CLUSTER_SELL',        # 87%
-    'ORB_BREAKOUT_BUY',    'ORB_BREAKDOWN_SELL',      # 87%
-    'VOLUME_BREAKOUT',                                 # 86%
-    'INSTITUTIONAL_BUY',   'INSTITUTIONAL_SELL',      # 84%
+    'LIQUIDITY_SWEEP_BUY', 'LIQUIDITY_SWEEP_SELL',
+    'ORDER_FLOW_BUY',      'ORDER_FLOW_SELL',
+    'ANCHORED_VWAP_BUY',   'ANCHORED_VWAP_SELL',
+    'VOL_PROFILE_POC_BUY', 'VOL_PROFILE_POC_SELL',
+    'EMA_CLUSTER_BUY',     'EMA_CLUSTER_SELL',
+    'ORB_BREAKOUT_BUY',    'ORB_BREAKDOWN_SELL',
+    'VOLUME_BREAKOUT',
+    'INSTITUTIONAL_BUY',   'INSTITUTIONAL_SELL',
 }
 
-# ── Allowed trading time slots (minutes from midnight) ────────────────────
-# Slot 1: 9:15–10:15  — Momentum / breakout          ⭐⭐⭐⭐⭐
-# Slot 2: 10:30–12:30 — Trend trading (BEST overall) ⭐⭐⭐⭐⭐
-# Slot 3: 14:00–15:30 — Breakout / reversal          ⭐⭐⭐⭐
-# 12:30–14:00 is avoided (lunch chop zone)            ⭐⭐
 TRADE_SLOTS = [
-    (9*60+15,  10*60+15),   # Slot 1: 9:15 – 10:15
-    (10*60+30, 12*60+30),   # Slot 2: 10:30 – 12:30
-    (14*60+0,  15*60+30),   # Slot 3: 14:00 – 15:30
+    (9*60+15,  10*60+15),
+    (10*60+30, 12*60+30),
+    (14*60+0,  15*60+30),
 ]
 
 def _in_trade_slot(mins: int) -> bool:
-    """Return True if the current time (minutes from midnight) falls in an allowed slot."""
     return any(start <= mins <= end for start, end in TRADE_SLOTS)
 
 def _slot_label(mins: int) -> str:
-    """Return a human-readable slot name for logging."""
     if   9*60+15  <= mins <= 10*60+15: return "SLOT-1 (9:15–10:15 Momentum)"
     elif 10*60+30 <= mins <= 12*60+30: return "SLOT-2 (10:30–12:30 Trend)"
     elif 14*60+0  <= mins <= 15*60+30: return "SLOT-3 (14:00–15:30 Breakout)"
@@ -273,9 +238,6 @@ def _slot_label(mins: int) -> str:
     elif mins < 9*60+15:               return "PRE-MARKET"
     else:                              return "CLOSED"
 
-# ──────────────────────────────────────────────────────────────
-# Sector definitions
-# ──────────────────────────────────────────────────────────────
 SECTOR_MAP = {
     "IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "MPHASIS", "COFORGE", "PERSISTENT", "OFSS"],
     "BANKING": ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "FEDERALBNK", "BANDHANBNK", "PNB", "BANKBARODA"],
@@ -331,96 +293,166 @@ def calc_zerodha_charges(buy_price, sell_price, qty, exchange='NSE'):
             'gross_pnl': 0, 'net_pnl': 0, 'breakeven_pts': 0, 'turnover': 0
         }
 
-# ==================== AUTHENTICATION ====================
-class Authenticator:
-    def __init__(self):
-        self.kite  = None
-        self._lock = Lock()
- 
-    def login(self):
-        with self._lock:
-            if os.path.exists(config.TOKEN_FILE):
-                try:
-                    with open(config.TOKEN_FILE) as f:
-                        tok = f.read().strip()
-                    self.kite = KiteConnect(api_key=config.API_KEY)
-                    self.kite.set_access_token(tok)
-                    _other_limiter.wait("profile")
-                    profile = self.kite.profile()
-                    logger.info(f"Logged in as: {profile['user_name']}")
-                    return self.kite
-                except Exception as e:
-                    logger.warning(f"Token expired: {e}")
-                    return self._do_login()
-            return self._do_login()
- 
-    def _do_login(self):
+# ==================== GLOBAL INSTRUMENT CACHE ====================
+_instrument_cache = None
+
+def get_instrument_cache(kite):
+    global _instrument_cache
+    if _instrument_cache is None:
         try:
-            self.kite = KiteConnect(api_key=config.API_KEY)
-            url = self.kite.login_url()
-            logger.info(f"Login URL: {url}")
-            webbrowser.open(url)
-            request_token = input("\nPaste request_token: ").strip()
-            if not request_token:
-                logger.error("No request token provided")
-                return None
-            _other_limiter.wait("generate_session")
-            data = self.kite.generate_session(
-                request_token, api_secret=config.API_SECRET
-            )
-            with open(config.TOKEN_FILE, "w") as f:
-                f.write(data["access_token"])
-            self.kite.set_access_token(data["access_token"])
-            logger.info("Login successful!")
-            return self.kite
-        except Exception as e:
-            logger.error(f"Login failed: {e}")
-            return None
-
-if not config.API_KEY or not config.API_SECRET:
-    print("\n[FATAL] Set KITE_API_KEY and KITE_API_SECRET env vars before running.\n")
-    sys.exit(1)
-auth = Authenticator()
-kite = auth.login()
-if not kite:
-    logger.critical("Authentication failed. Exiting.")
-    sys.exit(1)
-
-
-
-# ==================== STOCK DATA ====================
-def get_all_nse_stocks():
-    logger.info("Fetching NSE instruments...")
-    try:
-        _other_limiter.wait("instruments")
-        instruments = kite.instruments("NSE")
-        stocks = []
-        skip   = ["NIFTY", "SENSEX", "BANKEX", "MIDCAP", "SMALLCAP"]
-        for inst in instruments:
-            if (
-                inst["segment"] == "NSE"
-                and inst["instrument_type"] == "EQ"
-                and not any(x in inst["tradingsymbol"] for x in skip)
-            ):
-                stocks.append(
-                    {
+            _other_limiter.wait("instruments")
+            instruments = kite.instruments("NSE")
+            stocks = []
+            skip = ["NIFTY", "SENSEX", "BANKEX", "MIDCAP", "SMALLCAP"]
+            for inst in instruments:
+                if (inst["segment"] == "NSE"
+                    and inst["instrument_type"] == "EQ"
+                    and not any(x in inst["tradingsymbol"] for x in skip)):
+                    stocks.append({
                         "token":  inst["instrument_token"],
                         "symbol": inst["tradingsymbol"],
                         "name":   inst.get("name", inst["tradingsymbol"]),
-                    }
-                )
-        logger.info(f"{len(stocks)} stocks loaded")
-        return stocks
-    except Exception as e:
-        logger.error(f"Failed to fetch stocks: {e}")
-        return []
+                    })
+            _instrument_cache = stocks
+            logger.info(f"Instrument cache loaded: {len(stocks)} stocks")
+        except Exception as e:
+            logger.error(f"Failed to fetch instruments: {e}")
+            _instrument_cache = []
+    return _instrument_cache
 
-# ADD THESE TWO LINES:
-ALL_STOCKS = get_all_nse_stocks()
-SYMBOL_MAP = {s['symbol']: s for s in ALL_STOCKS}
+# ==================== USER MANAGER ====================
+class UserManager:
+    _users = None
+    _kites = {}
+    _paper_engines = {}
+    _scanners = {}
+    _sector_monitors = {}
+
+    @classmethod
+    def load_users(cls):
+        if cls._users is None:
+            with open("users.json", "r") as f:
+                raw_data = json.load(f)
+            decrypted = {}
+            for user_id, data in raw_data.items():
+                decrypted[user_id] = {
+                    "name": data["name"],
+                    "kite_api_key": decrypt_secret(data["kite_api_key"]),
+                    "kite_api_secret": decrypt_secret(data["kite_api_secret"]),
+                }
+            cls._users = decrypted
+        return cls._users
+
+    @classmethod
+    def reload_users(cls):
+        cls._users = None
+        return cls.load_users()
+
+    @classmethod
+    def get_user_data(cls, user_id):
+        users = cls.load_users()
+        return users.get(user_id)
+
+    @classmethod
+    def get_kite(cls, user_id):
+        if user_id not in cls._kites:
+            user_data = cls.get_user_data(user_id)
+            if not user_data:
+                raise ValueError(f"User {user_id} not found")
+            config = Config(user_id)
+            if os.path.exists(config.TOKEN_FILE):
+                with open(config.TOKEN_FILE, "r") as f:
+                    access_token = f.read().strip()
+                kite = KiteConnect(api_key=user_data["kite_api_key"])
+                kite.set_access_token(access_token)
+                cls._kites[user_id] = kite
+            else:
+                kite = KiteConnect(api_key=user_data["kite_api_key"])
+                cls._kites[user_id] = kite
+        return cls._kites[user_id]
+
+    @classmethod
+    def set_access_token(cls, user_id, access_token):
+        user_data = cls.get_user_data(user_id)
+        config = Config(user_id)
+        with open(config.TOKEN_FILE, "w") as f:
+            f.write(access_token)
+        kite = KiteConnect(api_key=user_data["kite_api_key"])
+        kite.set_access_token(access_token)
+        cls._kites[user_id] = kite
+
+    @classmethod
+    def get_user_config(cls, user_id):
+        config = Config(user_id)
+        if os.path.exists(config.USER_CONFIG_FILE):
+            with open(config.USER_CONFIG_FILE, "r") as f:
+                return json.load(f)
+        return {}
+
+    @classmethod
+    def save_user_config(cls, user_id, config_data):
+        config = Config(user_id)
+        with open(config.USER_CONFIG_FILE, "w") as f:
+            json.dump(config_data, f, indent=2)
+
+    @classmethod
+    def get_user_strategy(cls, user_id):
+        cfg = cls.get_user_config(user_id)
+        strategy_name = cfg.get('strategy')
+        if strategy_name and strategy_name in AVAILABLE_STRATEGIES:
+            return strategy_name, AVAILABLE_STRATEGIES[strategy_name]
+        default = list(AVAILABLE_STRATEGIES.keys())[0] if AVAILABLE_STRATEGIES else 'v4_high_trust'
+        if default not in AVAILABLE_STRATEGIES and AVAILABLE_STRATEGIES:
+            default = list(AVAILABLE_STRATEGIES.keys())[0]
+        return default, AVAILABLE_STRATEGIES.get(default, {})
+
+    @classmethod
+    def set_user_strategy(cls, user_id, strategy_name):
+        if strategy_name not in AVAILABLE_STRATEGIES:
+            raise ValueError(f"Strategy {strategy_name} not found")
+        cfg = cls.get_user_config(user_id)
+        cfg['strategy'] = strategy_name
+        cls.save_user_config(user_id, cfg)
+
+    @classmethod
+    def get_paper_engine(cls, user_id):
+        if user_id not in cls._paper_engines:
+            config = Config(user_id)
+            strategy_name, strategies_dict = cls.get_user_strategy(user_id)
+            scanner = cls.get_scanner(user_id)
+            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner)
+            cls._paper_engines[user_id] = pe
+            pe.start(cls.get_kite(user_id))
+        return cls._paper_engines[user_id]
+
+    @classmethod
+    def get_scanner(cls, user_id):
+        if user_id not in cls._scanners:
+            config = Config(user_id)
+            cls._scanners[user_id] = FullScanner(config)
+        return cls._scanners[user_id]
+
+    @classmethod
+    def get_sector_monitor(cls, user_id):
+        if user_id not in cls._sector_monitors:
+            pe = cls.get_paper_engine(user_id)
+            sm = SectorMonitor(pe)
+            cls._sector_monitors[user_id] = sm
+            sm.start()
+        return cls._sector_monitors[user_id]
+
+    @classmethod
+    def ensure_authenticated(cls, user_id):
+        try:
+            kite = cls.get_kite(user_id)
+            _other_limiter.wait("profile")
+            kite.profile()
+            return True
+        except Exception:
+            return False
 
 # ==================== NIFTY HELPERS ====================
-def get_nifty_data():
+def get_nifty_data(kite):
     try:
         _hist_limiter.wait("nifty data")
         data = kite.historical_data(
@@ -450,7 +482,6 @@ def get_nifty_data():
 class Indicators:
     @staticmethod
     def calculate_all(df):
-        """Calculate all technical indicators (unchanged from v7.2)"""
         try:
             ind = {}
             ind['close'] = df['close']
@@ -546,7 +577,6 @@ class Indicators:
             mf_mult = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low']).clip(lower=1e-10)
             ind['cmf'] = (mf_mult * df['volume']).rolling(21).sum() / df['volume'].rolling(21).sum().clip(lower=1e-10)
             
-            # VWAP
             try:
                 dt_col = pd.to_datetime(df['date'] if 'date' in df.columns else df.index)
                 _dates = dt_col if hasattr(dt_col, 'dt') else pd.Series(dt_col.values, index=df.index)
@@ -582,7 +612,6 @@ class Indicators:
             ind['ichi_spanB'] = ((hi52 + lo52) / 2).shift(26)
             ind['ichi_chikou'] = df['close'].shift(-26)
             
-            # SuperTrend
             hl_avg = (df['high'] + df['low']) / 2
             basic_upper = hl_avg + 3 * atr10
             basic_lower = hl_avg - 3 * atr10
@@ -609,7 +638,6 @@ class Indicators:
             ind['supertrend'] = st
             ind['supertrend_dir'] = st_d
             
-            # Parabolic SAR
             af = 0.02
             max_af = 0.2
             psar = df['close'].copy()
@@ -648,7 +676,6 @@ class Indicators:
             ind['psar'] = psar
             ind['psar_bull'] = psar_bull.astype(float)
             
-            # Donchian
             ind['dc_upper'] = df['high'].rolling(20).max()
             ind['dc_lower'] = df['low'].rolling(20).min()
             ind['dc_mid'] = (ind['dc_upper'] + ind['dc_lower']) / 2
@@ -681,7 +708,6 @@ class Indicators:
             ind['upper_wick_ratio'] = (df['high'] - df[['close', 'open']].max(axis=1)) / c_range.clip(lower=1e-10)
             ind['lower_wick_ratio'] = (df[['close', 'open']].min(axis=1) - df['low']) / c_range.clip(lower=1e-10)
             
-            # HTF bull strength
             try:
                 dt_series = pd.to_datetime(df['date'] if 'date' in df.columns else df.index)
                 close_dt = pd.Series(df['close'].values, index=dt_series)
@@ -724,20 +750,19 @@ class Indicators:
             logger.error(f"Latest indicators error: {e}")
             return {}
 
-# ==================== PANEL GATES ====================
-def _strat_votes(df_slice, ind_slice):
+# ==================== STRATEGY VOTING ====================
+def _strat_votes(df_slice, ind_slice, strategies_dict):
     b = 0.0
     s = 0.0
     total = 0
     try:
-        for name, func in all_strategies.items():
+        for name, func in strategies_dict.items():
             try:
                 if func(df_slice, ind_slice):
                     total += 1
                     u = name.upper()
                     is_sell = any(k in u for k in SELL_KW)
                     is_buy = any(k in u for k in BUY_KW) if not is_sell else False
-                    # High-trust strategies get 5.0 pts instead of 3.0
                     pts = 5.0 if name in HIGH_TRUST_STRATEGIES else 3.0
                     if is_sell:
                         s += pts
@@ -752,6 +777,7 @@ def _strat_votes(df_slice, ind_slice):
         logger.error(f"Strat votes error: {e}")
     return b, s, total
 
+# ==================== PANEL GATES ====================
 def _panel_gates(ind, i):
     g = {k: False for k in ['p1_buy','p1_sell','p2_buy','p2_sell','p3_buy','p3_sell',
                             'p4_buy','p4_sell','p5_buy','p5_sell','p6_buy','p6_sell',
@@ -1023,24 +1049,25 @@ def _panel_gates(ind, i):
 
 # ==================== FULL SCANNER ENGINE ====================
 class FullScanner:
-    SCAN_FILE = 'scan_results.json'
     MIN_PRICE = 50.0
     MIN_ADX = 15.0
     MIN_SCORE = 25.0
     RATE_SLEEP = 0.67
     
-    def __init__(self):
-        self._lock    = threading.RLock()
+    def __init__(self, config):
+        self.config = config
+        self.SCAN_FILE = config.SCAN_FILE
+        self._lock = threading.RLock()
         self._running = False
         self._progress = {
-            "status":        "idle",
-            "done":          0,
-            "total":         0,
-            "current":       "",
-            "results":       [],
-            "last_scan":     None,
-            "elapsed":       0,
-            "errors":        0,
+            "status": "idle",
+            "done": 0,
+            "total": 0,
+            "current": "",
+            "results": [],
+            "last_scan": None,
+            "elapsed": 0,
+            "errors": 0,
             "scan_min_score": 25.0,
         }
     
@@ -1053,33 +1080,33 @@ class FullScanner:
         with self._lock:
             self._progress.update(kw)
     
-    def _build_candidates(self, mode='priority'):
+    def _build_candidates(self, mode='priority', symbol_map=None):
         try:
+            if symbol_map is None:
+                return []
             if mode == 'nifty200':
-                # ~200 liquid large+midcap stocks — scan time ~2.5 min
-                # Best balance of coverage vs speed for intraday use
-                return [SYMBOL_MAP[s] for s in NIFTY200_SYMBOLS if s in SYMBOL_MAP]
+                return [symbol_map[s] for s in NIFTY200_SYMBOLS if s in symbol_map]
             elif mode == 'priority':
                 out = []
                 for sym in PRIORITY_SYMBOLS:
-                    if sym in SYMBOL_MAP:
-                        out.append(SYMBOL_MAP[sym])
+                    if sym in symbol_map:
+                        out.append(symbol_map[sym])
                 pri_set = {s['symbol'] for s in out}
-                for s in ALL_STOCKS:
+                for s in symbol_map.values():
                     if s['symbol'] not in pri_set:
                         out.append(s)
                 return out
             elif mode == 'top200':
-                return [SYMBOL_MAP[s] for s in PRIORITY_SYMBOLS[:200] if s in SYMBOL_MAP]
+                return [symbol_map[s] for s in PRIORITY_SYMBOLS[:200] if s in symbol_map]
             elif mode == 'nifty_indices':
-                return [SYMBOL_MAP[s] for s in PRIORITY_SYMBOLS[:150] if s in SYMBOL_MAP]
+                return [symbol_map[s] for s in PRIORITY_SYMBOLS[:150] if s in symbol_map]
             else:
                 out = []
                 pri_set = set(PRIORITY_SYMBOLS)
                 for sym in PRIORITY_SYMBOLS:
-                    if sym in SYMBOL_MAP:
-                        out.append(SYMBOL_MAP[sym])
-                for s in ALL_STOCKS:
+                    if sym in symbol_map:
+                        out.append(symbol_map[sym])
+                for s in symbol_map.values():
                     if s['symbol'] not in pri_set:
                         out.append(s)
                 return out
@@ -1087,31 +1114,23 @@ class FullScanner:
             logger.error(f"Build candidates error: {e}")
             return []
     
-    def _score_stock(
-        self,
-        sym_info,
-        min_score=None,
-        scan_end=None,
-        scan_start5=None,
-        scan_start15=None,
-    ):
+    def _score_stock(self, sym_info, kite, paper_engine, min_score=None, scan_end=None, scan_start5=None, scan_start15=None):
         threshold = float(min_score) if min_score is not None else self.MIN_SCORE
-        sym   = sym_info["symbol"]
+        sym = sym_info["symbol"]
         token = sym_info["token"]
  
         try:
-            end       = scan_end    or datetime.now()
-            start5    = scan_start5 or (end - timedelta(days=7))
+            end = scan_end or datetime.now()
+            start5 = scan_start5 or (end - timedelta(days=7))
             start15_dt = scan_start15 or (end - timedelta(days=14))
  
-            # ── 5-min data ────────────────────────────────────
             _hist_limiter.wait(f"5min {sym}")
             data5 = kite.historical_data(token, start5, end, "5minute")
             if not data5 or len(data5) < 80:
                 return None
  
-            df5  = pd.DataFrame(data5)
-            ltp  = float(df5["close"].iloc[-1])
+            df5 = pd.DataFrame(data5)
+            ltp = float(df5["close"].iloc[-1])
             if ltp < self.MIN_PRICE:
                 return None
  
@@ -1120,70 +1139,69 @@ class FullScanner:
                 return None
  
             ind5 = Indicators.calculate_all(df5)
-            i5   = len(df5) - 1
-            g5   = _panel_gates(ind5, i5)
+            i5 = len(df5) - 1
+            g5 = _panel_gates(ind5, i5)
  
-            df5_w  = df5.iloc[-60:].reset_index(drop=True)
+            df5_w = df5.iloc[-60:].reset_index(drop=True)
             ind5_w = ind5.iloc[-60:].reset_index(drop=True)
-            strat5_b, strat5_s, _ = _strat_votes(df5_w, ind5_w)
-            tot5      = strat5_b + strat5_s
-            buy5_pct  = strat5_b / tot5 * 100 if tot5 > 0 else 50.0
-            sel5_pct  = strat5_s / tot5 * 100 if tot5 > 0 else 50.0
-            soft5_b   = sum([g5.get(f"p{p}_buy",  False) for p in [1,2,3,4,5,10]])
-            soft5_s   = sum([g5.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-            buy5_score  = soft5_b * 15.0 + g5.get("buy_bonus",  0) + buy5_pct * 0.2
+            strat5_b, strat5_s, _ = _strat_votes(df5_w, ind5_w, paper_engine.strategies_dict)
+            tot5 = strat5_b + strat5_s
+            buy5_pct = strat5_b / tot5 * 100 if tot5 > 0 else 50.0
+            sel5_pct = strat5_s / tot5 * 100 if tot5 > 0 else 50.0
+            soft5_b = sum([g5.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
+            soft5_s = sum([g5.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
+            buy5_score = soft5_b * 15.0 + g5.get("buy_bonus", 0) + buy5_pct * 0.2
             sell5_score = soft5_s * 15.0 + g5.get("sell_bonus", 0) + sel5_pct * 0.2
  
             if not g5.get("p8_ok", True):
-                buy5_score  -= 15.0
+                buy5_score -= 15.0
                 sell5_score -= 15.0
             if not g5.get("p9_ok", True):
-                buy5_score  -= 10.0
+                buy5_score -= 10.0
                 sell5_score -= 10.0
  
-            # ── 15-min data ───────────────────────────────────
             _hist_limiter.wait(f"15min {sym}")
             data15 = kite.historical_data(token, start15_dt, end, "15minute")
  
             htf_buy_score = htf_sell_score = 0.0
-            htf_adx   = 0.0
-            htf_rsi   = 50.0
+            htf_adx = 0.0
+            htf_rsi = 50.0
             htf_align = False
  
             if data15 and len(data15) >= 40:
-                df15   = pd.DataFrame(data15)
-                ind15  = Indicators.calculate_all(df15)
-                i15    = len(df15) - 1
-                g15    = _panel_gates(ind15, i15)
+                df15 = pd.DataFrame(data15)
+                ind15 = Indicators.calculate_all(df15)
+                i15 = len(df15) - 1
+                g15 = _panel_gates(ind15, i15)
                 df15_w = df15.iloc[-40:].reset_index(drop=True)
                 ind15_w = ind15.iloc[-40:].reset_index(drop=True)
-                htf_strat_b, htf_strat_s, _ = _strat_votes(df15_w, ind15_w)
-                tot15      = htf_strat_b + htf_strat_s
-                buy15_pct  = htf_strat_b / tot15 * 100 if tot15 > 0 else 50.0
-                sel15_pct  = htf_strat_s / tot15 * 100 if tot15 > 0 else 50.0
-                soft15_b   = sum([g15.get(f"p{p}_buy",  False) for p in [1,2,3,4,5,10]])
-                soft15_s   = sum([g15.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-                htf_buy_score  = soft15_b * 12.0 + g15.get("buy_bonus",  0) + buy15_pct * 0.15
+                htf_strat_b, htf_strat_s, _ = _strat_votes(df15_w, ind15_w, paper_engine.strategies_dict)
+                tot15 = htf_strat_b + htf_strat_s
+                buy15_pct = htf_strat_b / tot15 * 100 if tot15 > 0 else 50.0
+                sel15_pct = htf_strat_s / tot15 * 100 if tot15 > 0 else 50.0
+                soft15_b = sum([g15.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
+                soft15_s = sum([g15.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
+                htf_buy_score = soft15_b * 12.0 + g15.get("buy_bonus", 0) + buy15_pct * 0.15
                 htf_sell_score = soft15_s * 12.0 + g15.get("sell_bonus", 0) + sel15_pct * 0.15
                 raw = float(ind15["adx"].iloc[-1]) if "adx" in ind15.columns else 0
                 htf_adx = 0 if np.isnan(raw) else raw
                 raw = float(ind15["rsi"].iloc[-1]) if "rsi" in ind15.columns else 50
                 htf_rsi = 50 if np.isnan(raw) else raw
-                dir5   = "BUY"  if buy5_score  >= sell5_score  else "SELL"
-                dir15  = "BUY"  if htf_buy_score >= htf_sell_score else "SELL"
+                dir5 = "BUY" if buy5_score >= sell5_score else "SELL"
+                dir15 = "BUY" if htf_buy_score >= htf_sell_score else "SELL"
                 htf_align = (dir5 == dir15)
             else:
-                htf_buy_score  = buy5_score  * 0.5
+                htf_buy_score = buy5_score * 0.5
                 htf_sell_score = sell5_score * 0.5
  
-            buy_score  = buy5_score  * 0.6 + htf_buy_score  * 0.4
+            buy_score = buy5_score * 0.6 + htf_buy_score * 0.4
             sell_score = sell5_score * 0.6 + htf_sell_score * 0.4
             best_score = max(buy_score, sell_score)
-            direction  = "BUY" if buy_score >= sell_score else "SELL"
+            direction = "BUY" if buy_score >= sell_score else "SELL"
             align_bonus = 12.0 if htf_align else -5.0
  
             triggered = []
-            for name, func in all_strategies.items():
+            for name, func in paper_engine.strategies_dict.items():
                 try:
                     if func(df5_w, ind5_w):
                         triggered.append(name)
@@ -1194,7 +1212,7 @@ class FullScanner:
             if np.isnan(adx_val):
                 adx_val = 0
  
-            soft_b    = soft5_b if direction == "BUY" else soft5_s
+            soft_b = soft5_b if direction == "BUY" else soft5_s
             s_dir_pct = buy5_pct if direction == "BUY" else sel5_pct
  
             composite = round(
@@ -1224,8 +1242,8 @@ class FullScanner:
  
             try:
                 today_str = end.strftime("%Y-%m-%d")
-                dt_s      = pd.to_datetime(df5["date"] if "date" in df5.columns else df5.index)
-                yd_bars   = df5[dt_s.dt.strftime("%Y-%m-%d") < today_str]
+                dt_s = pd.to_datetime(df5["date"] if "date" in df5.columns else df5.index)
+                yd_bars = df5[dt_s.dt.strftime("%Y-%m-%d") < today_str]
                 prev_close = (
                     float(yd_bars["close"].iloc[-1])
                     if len(yd_bars) > 0
@@ -1235,8 +1253,8 @@ class FullScanner:
                 prev_close = float(df5["close"].iloc[-2]) if len(df5) > 1 else ltp
  
             change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close else 0
-            gap_pct    = change_pct
-            vol_ratio  = round(float(df5["volume"].iloc[-1]) / (avg_vol + 1e-9), 2)
+            gap_pct = change_pct
+            vol_ratio = round(float(df5["volume"].iloc[-1]) / (avg_vol + 1e-9), 2)
  
             if vol_ratio > 2.0:
                 composite = round(composite + 5.0, 1)
@@ -1246,30 +1264,30 @@ class FullScanner:
                 composite = round(composite + 3.0, 1)
  
             return {
-                "symbol":         sym,
-                "price":          round(ltp, 2),
-                "change":         change_pct,
-                "volume":         int(df5["volume"].iloc[-1]),
-                "avg_volume":     int(avg_vol),
-                "buy_score":      round(buy_score,  1),
-                "sell_score":     round(sell_score, 1),
-                "buy5_score":     round(buy5_score,  1),
-                "sell5_score":    round(sell5_score, 1),
-                "buy15_score":    round(htf_buy_score,  1),
-                "sell15_score":   round(htf_sell_score, 1),
-                "htf_align":      htf_align,
+                "symbol": sym,
+                "price": round(ltp, 2),
+                "change": change_pct,
+                "volume": int(df5["volume"].iloc[-1]),
+                "avg_volume": int(avg_vol),
+                "buy_score": round(buy_score, 1),
+                "sell_score": round(sell_score, 1),
+                "buy5_score": round(buy5_score, 1),
+                "sell5_score": round(sell5_score, 1),
+                "buy15_score": round(htf_buy_score, 1),
+                "sell15_score": round(htf_sell_score, 1),
+                "htf_align": htf_align,
                 "composite_score": composite,
-                "direction":      direction,
+                "direction": direction,
                 "recommendation": rec,
-                "buy_pct":        round(buy5_pct, 1),
-                "sell_pct":       round(sel5_pct, 1),
-                "soft_b":         int(soft5_b),
-                "soft_s":         int(soft5_s),
-                "signal_count":   len(triggered),
-                "strategies":     triggered[:8],
+                "buy_pct": round(buy5_pct, 1),
+                "sell_pct": round(sel5_pct, 1),
+                "soft_b": int(soft5_b),
+                "soft_s": int(soft5_s),
+                "signal_count": len(triggered),
+                "strategies": triggered[:8],
                 "indicators": {
-                    "rsi":     round(rsi_val, 1),
-                    "adx":     round(adx_val, 1),
+                    "rsi": round(rsi_val, 1),
+                    "adx": round(adx_val, 1),
                     "htf_rsi": round(htf_rsi, 1),
                     "htf_adx": round(htf_adx, 1),
                     "atr_pct": round(
@@ -1277,14 +1295,14 @@ class FullScanner:
                         if "atr_percent" in ind5.columns else 0, 2
                     ),
                 },
-                "p6_buy":   bool(g5.get("p6_buy",  False)),
-                "p6_sell":  bool(g5.get("p6_sell", False)),
+                "p6_buy": bool(g5.get("p6_buy", False)),
+                "p6_sell": bool(g5.get("p6_sell", False)),
                 "htf_bull": round(
                     float(ind5["htf_bull"].iloc[-1])
                     if "htf_bull" in ind5.columns else 0.5, 2
                 ),
                 "already_pinned": sym in paper_engine.data.get("pinned", []),
-                "gap_pct":  round(gap_pct,   2),
+                "gap_pct": round(gap_pct, 2),
                 "vol_ratio": round(vol_ratio, 2),
             }
  
@@ -1292,7 +1310,7 @@ class FullScanner:
             logger.debug(f"Score stock error {sym}: {e}")
             return None
     
-    def run_scan(self, mode="all", max_stocks=None, min_score=None):
+    def run_scan(self, kite, paper_engine, symbol_map, mode="all", max_stocks=None, min_score=None):
         if self._running:
             return {"status": "already_running"}
  
@@ -1302,17 +1320,17 @@ class FullScanner:
             self._running = True
             t0 = time.time()
             try:
-                candidates = self._build_candidates(mode)
+                candidates = self._build_candidates(mode, symbol_map)
                 if max_stocks:
                     candidates = candidates[: int(max_stocks)]
  
-                _now  = datetime.now()
+                _now = datetime.now()
                 _mins = (_now.minute // 5) * 5
                 scan_end = _now.replace(minute=_mins, second=0, microsecond=0)
                 if (_now - scan_end).total_seconds() < 3:
                     scan_end -= timedelta(minutes=5)
  
-                scan_start5  = scan_end - timedelta(days=7)
+                scan_start5 = scan_end - timedelta(days=7)
                 scan_start15 = scan_end - timedelta(days=14)
  
                 logger.info(
@@ -1331,7 +1349,7 @@ class FullScanner:
                 )
  
                 results = []
-                errors  = 0
+                errors = 0
  
                 for idx, sym_info in enumerate(candidates):
                     if not self._running:
@@ -1343,6 +1361,8 @@ class FullScanner:
                     try:
                         res = self._score_stock(
                             sym_info,
+                            kite,
+                            paper_engine,
                             scan_min_score,
                             scan_end,
                             scan_start5,
@@ -1356,14 +1376,11 @@ class FullScanner:
                         logger.error(f"Scan error {sym}: {e}")
  
                     self._update(errors=errors)
- 
-                    # RATE_SLEEP = 0.67 s keeps us at 3 historical req/sec
-                    # (2 calls per stock × 1/0.67 ≈ 3/sec)
                     time.sleep(self.RATE_SLEEP)
  
                 priority_order = {
                     "STRONG BUY": 0, "STRONG SELL": 1,
-                    "BUY": 2,        "SELL": 3,
+                    "BUY": 2, "SELL": 3,
                     "NEUTRAL": 4,
                 }
                 results.sort(
@@ -1420,14 +1437,10 @@ class FullScanner:
             stored_min = self._progress.get('scan_min_score', self.MIN_SCORE)
         effective_min = float(min_score) if min_score is not None else stored_min
         results = [r for r in results if r['composite_score'] >= effective_min]
-        pinned = set(paper_engine.data.get('pinned', []))
-        for r in results:
-            r['already_pinned'] = r['symbol'] in pinned
         return results[:limit]
-    
+
 # ==================== PAPER TRADING ENGINE ====================
 class PaperTradingEngine:
-    PAPER_FILE = 'paper_trading.json'
     TARGET_PCT = 0.010
     STOPLOSS_PCT = 0.005
     INTRADAY_MARGIN_PCT = 0.20
@@ -1439,7 +1452,7 @@ class PaperTradingEngine:
     STRATEGY_MIN_TRADES = 10
     STRATEGY_MIN_WIN_RATE = 0.40
     MAX_DAILY_LOSS_PCT = 0.05
-    MAX_DAILY_PROFIT_PCT = 0.02   # NEW: stop after 2% daily profit
+    MAX_DAILY_PROFIT_PCT = 0.02
     MAX_CONSECUTIVE_LOSSES = 3
     MAX_POSITION_HOLD_MINUTES = 180
     COOLDOWN_MINUTES = 5
@@ -1448,22 +1461,24 @@ class PaperTradingEngine:
     MARKET_CLOSE = 930
     NO_NEW_TRADES_AFTER = 870
     SQUARE_OFF_TIME = 915
-    MIN_SIGNAL_SCORE = 35.0        # v9.1: raised from 28 — filters noise while keeping valid setups
-    MIN_VOTE_PCT = 50.0            # v9.1: slight tighten from 48 — majority vote needed
-    MIN_SOFT_LAYERS = 2            # panel layers required
-    MIN_VOL_SURGE = 1.3            # entry volume filter
-    # Counter-trend protection: when HTF strongly opposes entry direction,
-    # require a higher signal score to compensate for the structural risk.
-    COUNTER_TREND_SCORE_BOOST = 15.0   # extra score required when p6 AND htf conflict
-    MIN_HTF_ALIGN_SCORE = 42.0         # if HTF conflicts, score must clear this bar
-    # ── v9.2: Dynamic position sizing ───────────────────────────────────────
-    RISK_PER_TRADE_PCT  = 0.01    # risk 1% of wallet per trade (ATR-based)
-    ATR_SL_MULTIPLIER   = 1.5     # stop distance = ATR × this (matches _calculate_atr_targets)
-    # ── v9.2: Sector correlation scoring ────────────────────────────────────
-    SECTOR_BIAS_SCORE   = 6.0     # pts added/subtracted when sector aligns/opposes trade
-    SECTOR_BIAS_TTL     = 300     # seconds before sector cache is considered stale
+    MIN_SIGNAL_SCORE = 35.0
+    MIN_VOTE_PCT = 50.0
+    MIN_SOFT_LAYERS = 2
+    MIN_VOL_SURGE = 1.3
+    COUNTER_TREND_SCORE_BOOST = 15.0
+    MIN_HTF_ALIGN_SCORE = 42.0
+    RISK_PER_TRADE_PCT = 0.01
+    ATR_SL_MULTIPLIER = 1.5
+    SECTOR_BIAS_SCORE = 6.0
+    SECTOR_BIAS_TTL = 300
     
-    def __init__(self):
+    def __init__(self, config, strategies_dict, scanner=None):
+        self.config = config
+        self.strategies_dict = strategies_dict
+        self.scanner = scanner
+        self.PAPER_FILE = config.PAPER_FILE
+        self.PAPER_BACKUP_DIR = config.PAPER_BACKUP_DIR
+        os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
         self._lock = threading.RLock()
         self._health_lock = threading.Lock()
         self.data = self._load()
@@ -1475,28 +1490,20 @@ class PaperTradingEngine:
         self.consecutive_losses = 0
         self.last_trade_pnl = None
         self.strategy_performance = self.data.get('strategy_performance', {})
-        self._signal_logs = deque(maxlen=1000)
-        self._margin_cache = {}      # cache margin info
-        self._margin_cache_time = {} # timestamp for cache
-        self._margin_cache_ttl = 300 # 5 minutes TTL
+        self._signal_logs = deque(maxlen=5000)
+        self._margin_cache = {}
+        self._margin_cache_time = {}
+        self._margin_cache_ttl = 300
         self._fast_exit_thread = None
-        # v9.2: sector bias cache (updated by SectorMonitor every 60 s)
-        self._sector_bias_cache = {}  # {sector_name: {'direction': str, 'updated': float}}
+        self._sector_bias_cache = {}
         logger.info("PaperTradingEngine initialized")
 
     def _fast_exit_loop(self):
-        """
-        Dedicated thread that continuously checks open positions for target/stop-loss hits.
-        Uses a single batch LTP call per cycle – no historical data, no indicators, no strategy voting.
-        Runs every 1 second.
-        """
         logger.info("Fast exit loop started")
         while self._running:
             try:
                 now = datetime.now()
                 mins = now.hour * 60 + now.minute
-
-                # Only run during market hours (9:15 to 15:30)
                 if not (self.MARKET_OPEN <= mins <= self.MARKET_CLOSE):
                     time.sleep(1)
                     continue
@@ -1507,21 +1514,18 @@ class PaperTradingEngine:
                     time.sleep(1)
                     continue
 
-                # Batch LTP for all symbols with open positions (single API call)
                 syms = list(positions.keys())
                 batch_ltp = self._get_batch_ltp(syms)
                 if not batch_ltp:
                     time.sleep(1)
                     continue
 
-                # Check each position
                 with self._lock:
                     for sym, pos in list(self.data.get("positions", {}).items()):
                         ltp = batch_ltp.get(sym)
                         if ltp is None:
                             continue
 
-                        # Check target and stoploss
                         side = pos["side"]
                         target = pos.get("target")
                         stoploss = pos.get("stoploss")
@@ -1537,7 +1541,7 @@ class PaperTradingEngine:
                             elif ltp <= stoploss:
                                 exit_price = ltp
                                 reason = "FAST_STOP_LOSS"
-                        else:  # SELL
+                        else:
                             if ltp <= target:
                                 exit_price = ltp
                                 reason = "FAST_TARGET"
@@ -1546,12 +1550,10 @@ class PaperTradingEngine:
                                 reason = "FAST_STOP_LOSS"
 
                         if exit_price:
-                            # Log and close immediately
                             logger.info(f"FAST EXIT {sym} {side} {reason} @ {exit_price:.2f}")
                             self._close_position_nolock(sym, exit_price=exit_price, reason=reason)
 
-                time.sleep(1)  # Run every second
-
+                time.sleep(1)
             except Exception as e:
                 logger.error(f"Fast exit loop error: {e}")
                 time.sleep(5)
@@ -1559,9 +1561,9 @@ class PaperTradingEngine:
     def _backup_file(self, filepath):
         try:
             if os.path.exists(filepath):
-                backup_name = f"{config.PAPER_BACKUP_DIR}/paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                backup_name = f"{self.PAPER_BACKUP_DIR}/paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 shutil.copy(filepath, backup_name)
-                backups = sorted(glob.glob(f"{config.PAPER_BACKUP_DIR}/paper_*.json"))
+                backups = sorted(glob.glob(f"{self.PAPER_BACKUP_DIR}/paper_*.json"))
                 for old in backups[:-100]:
                     os.remove(old)
         except Exception as e:
@@ -1644,19 +1646,15 @@ class PaperTradingEngine:
             initial_capital = daily_stats.get('peak_wallet', self.data['wallet'])
             if initial_capital <= 0:
                 initial_capital = self.data['wallet']
-            # Daily loss limit
             if daily_pnl < 0 and abs(daily_pnl) > initial_capital * self.MAX_DAILY_LOSS_PCT:
                 self._trigger_circuit_breaker(f"Daily loss limit: {daily_pnl:.2f}")
                 return False, "Daily loss limit exceeded"
-            # Daily profit target
             if daily_pnl > 0 and daily_pnl > initial_capital * self.MAX_DAILY_PROFIT_PCT:
                 self._trigger_circuit_breaker(f"Daily profit target reached: {daily_pnl:.2f}")
                 return False, "Daily profit target reached"
-            # Consecutive losses
             if self.consecutive_losses >= self.MAX_CONSECUTIVE_LOSSES:
                 self._trigger_circuit_breaker(f"{self.consecutive_losses} consecutive losses")
                 return False, "Max consecutive losses"
-            # Drawdown
             trade_peaks = [t.get('peak_wallet', 0) for t in self.data['trades'][-50:]]
             peak = max([self.data['wallet']] + trade_peaks)
             if peak > 0 and (peak - self.data['wallet']) / peak > self.CIRCUIT_BREAKER_THRESHOLD:
@@ -1680,36 +1678,28 @@ class PaperTradingEngine:
         for attempt in range(retries):
             try:
                 _quote_limiter.wait(f"ltp {symbol}")
-                q = kite.ltp([f"NSE:{symbol}"])
+                q = self._kite.ltp([f"NSE:{symbol}"])
                 if q and f"NSE:{symbol}" in q:
                     return float(q[f"NSE:{symbol}"]["last_price"])
             except Exception as e:
                 if attempt < retries - 1:
-                    time.sleep(1.1)          # back off a full second
+                    time.sleep(1.1)
                 else:
                     logger.error(f"LTP failed {symbol}: {e}")
         return None
 
     def _get_batch_ltp(self, symbols, retries=3):
-        """
-        Fetch LTP for a list of NSE symbols in a single API call.
-        Returns dict {symbol: float_price}.  Missing symbols get None.
- 
-        Zerodha allows up to ~500 symbols per ltp() call, so one call
-        covers every pinned stock we will ever have in practice.
-        """
         if not symbols:
             return {}
-        # Zerodha hard cap per call
         BATCH_SIZE = 500
         result = {}
         for i in range(0, len(symbols), BATCH_SIZE):
             batch = symbols[i : i + BATCH_SIZE]
-            keys  = [f"NSE:{s}" for s in batch]
+            keys = [f"NSE:{s}" for s in batch]
             for attempt in range(retries):
                 try:
                     _quote_limiter.wait(f"batch_ltp chunk {i//BATCH_SIZE}")
-                    q = kite.ltp(keys)
+                    q = self._kite.ltp(keys)
                     for s in batch:
                         k = f"NSE:{s}"
                         result[s] = float(q[k]["last_price"]) if q and k in q else None
@@ -1723,6 +1713,14 @@ class PaperTradingEngine:
                             result[s] = None
         return result
     
+    @property
+    def _kite(self):
+        return self._kite_instance
+
+    @_kite.setter
+    def _kite(self, kite):
+        self._kite_instance = kite
+
     def _get_execution_price(self, symbol, side, trigger_price, is_stop_loss=False):
         ltp = self._get_live_ltp(symbol)
         if ltp is None:
@@ -1747,7 +1745,6 @@ class PaperTradingEngine:
         stoploss = pos.get('stoploss')
         if target is None or stoploss is None:
             return None, None
-        # Primary: use live LTP
         if ltp is not None:
             if side == 'BUY':
                 if ltp >= target:
@@ -1768,7 +1765,6 @@ class PaperTradingEngine:
                     logger.info(f"SL HIT {symbol} via LTP: {ltp:.2f}>=SL={stoploss:.2f} -> {ep:.2f}")
                     return ep, 'STOP_LOSS'
             return None, None
-        # Fallback: candle data
         try:
             if 'date' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['date']):
                 df = df.copy()
@@ -1813,10 +1809,8 @@ class PaperTradingEngine:
         side = pos['side']
         entry = pos['entry_price']
         updated = False
-        # ATR‑based trailing (if available)
         atr = pos.get('entry_atr')
         if atr and atr > 0:
-            # Dynamic trailing: trail by 1.5× ATR from the peak
             peak_price = pos.get('peak_price', entry)
             if side == 'BUY':
                 new_sl = round(peak_price - 1.5 * atr, 2)
@@ -1830,7 +1824,6 @@ class PaperTradingEngine:
                     pos['stoploss'] = new_sl
                     updated = True
                     logger.info(f"ATR trail SHORT {entry:.2f} -> SL {new_sl:.2f} (peak {peak_price:.2f})")
-        # Traditional percentage‑based trailing
         if current_move_pct >= 0.3:
             if not pos.get('trail_activated', False):
                 pos['trail_activated'] = True
@@ -1859,7 +1852,6 @@ class PaperTradingEngine:
                         pos['stoploss'] = candidate
                         updated = True
                         logger.info(f"Trail tightened SHORT -> SL {candidate:.2f} (ltp={ltp:.2f})")
-        # End-of-day tightening
         if mins >= 870:
             if side == 'BUY':
                 eod_sl = round(ltp * 0.998, 2)
@@ -1871,7 +1863,6 @@ class PaperTradingEngine:
                 if eod_sl < pos.get('stoploss', float('inf')):
                     pos['stoploss'] = eod_sl
                     updated = True
-        # Update peak price
         if side == 'BUY':
             if ltp > pos.get('peak_price', entry):
                 pos['peak_price'] = ltp
@@ -1896,41 +1887,39 @@ class PaperTradingEngine:
  
         try:
             _other_limiter.wait(f"margin {symbol}")
-            result = kite.order_margins(
+            result = self._kite.order_margins(
                 [
                     {
-                        "exchange":         "NSE",
-                        "tradingsymbol":    symbol,
+                        "exchange": "NSE",
+                        "tradingsymbol": symbol,
                         "transaction_type": side,
-                        "variety":          "regular",
-                        "product":          "MIS",
-                        "order_type":       "MARKET",
-                        "quantity":         1,
+                        "variety": "regular",
+                        "product": "MIS",
+                        "order_type": "MARKET",
+                        "quantity": 1,
                     }
                 ]
             )
             if result and len(result) > 0:
                 margin_per_share = float(result[0].get("total", 0))
                 if margin_per_share > 0 and price > 0:
-                    margin_pct       = round(margin_per_share / price, 4)
-                    margin_pct       = max(0.10, min(1.0, margin_pct))
+                    margin_pct = round(margin_per_share / price, 4)
+                    margin_pct = max(0.10, min(1.0, margin_pct))
                     margin_per_share = round(price * margin_pct, 4)
-                    leverage         = round(
-                        result[0].get("leverage", 1 / margin_pct), 2
-                    )
+                    leverage = round(result[0].get("leverage", 1 / margin_pct), 2)
                     logger.info(
                         f"Margin {symbol} {side}: {margin_per_share:.2f}/share "
                         f"({margin_pct*100:.1f}% = {leverage}x) — Kite API"
                     )
-                    self._margin_cache[key]      = (margin_per_share, margin_pct, "kite_api")
+                    self._margin_cache[key] = (margin_per_share, margin_pct, "kite_api")
                     self._margin_cache_time[key] = now
                     return margin_per_share, margin_pct, "kite_api"
         except Exception as e:
             logger.error(f"Margin API error {symbol}: {e}")
  
-        margin_pct       = self.INTRADAY_MARGIN_PCT
+        margin_pct = self.INTRADAY_MARGIN_PCT
         margin_per_share = round(price * margin_pct, 4)
-        self._margin_cache[key]      = (margin_per_share, margin_pct, "fallback")
+        self._margin_cache[key] = (margin_per_share, margin_pct, "fallback")
         self._margin_cache_time[key] = now
         logger.info(
             f"Margin {symbol} {side}: fallback "
@@ -1950,14 +1939,8 @@ class PaperTradingEngine:
         if margin_per_share <= 0:
             return 0, 0.0, margin_pct, source
 
-        # ── Ceiling: margin-based max qty ────────────────────────────────
         margin_qty = int(usable // margin_per_share)
 
-        # ── v9.2: ATR-based risk sizing (risk 1% of wallet per trade) ────
-        # Risk amount  = wallet × RISK_PER_TRADE_PCT
-        # SL distance  = ATR × ATR_SL_MULTIPLIER  (matches _calculate_atr_targets)
-        # Risk qty     = risk_amount / sl_distance
-        # Final qty    = min(margin_cap, risk_qty)  — never exceed margin cap
         if atr and atr > 0:
             risk_amount = wallet * self.RISK_PER_TRADE_PCT
             sl_distance = atr * self.ATR_SL_MULTIPLIER
@@ -1972,68 +1955,51 @@ class PaperTradingEngine:
             else:
                 qty = margin_qty
         else:
-            qty = margin_qty  # fallback when ATR unavailable
+            qty = margin_qty
 
         if qty < 1:
             return 0, 0.0, margin_pct, source
         h = signal_time.hour
         m = signal_time.minute
         slot_mins = h * 60 + m
-        # Slot-aware position sizing:
-        #   Slot 1 (9:15–10:15)  — full size (momentum moves fast)
-        #   Slot 2 (10:30–12:30) — full size (best quality)
-        #   Slot 3 (14:00–15:30) — 75% (good but more volatile near close)
-        #   Avoid zone / outside  — 25% (should be blocked before here)
         if 14*60+0 <= slot_mins <= 15*60+30:
             qty = int(qty * 0.75)
         elif 12*60+30 < slot_mins < 14*60+0:
-            qty = int(qty * 0.25)   # lunch chop — heavily reduced
-        # Slots 1 & 2: full qty (no reduction)
+            qty = int(qty * 0.25)
         if qty < 1:
             return 0, 0.0, margin_pct, source
         margin_used = round(qty * margin_per_share, 2)
         return qty, margin_used, margin_pct, source
     
     def _get_l2_execution_price(self, symbol, side):
-        """
-        v9.2 — Use Level-2 order-book depth (best ask / best bid) for a
-        more realistic fill price than flat-slippage on LTP.
-
-        • BUY  → uses the best ask (lowest sell price in book).
-        • SELL → uses the best bid (highest buy price in book).
-        • Dynamic slippage = max(actual_spread, flat SLIPPAGE_PCT).
-        • Falls back to LTP + flat slippage on any API error.
-
-        Returns: (fill_price: float, actual_slip_pct: float)
-        """
         try:
             _quote_limiter.wait(f"l2_quote {symbol}")
-            q = kite.quote([f"NSE:{symbol}"])
+            q = self._kite.quote([f"NSE:{symbol}"])
             if not q or f"NSE:{symbol}" not in q:
                 raise ValueError("No quote returned")
-            d   = q[f"NSE:{symbol}"]
+            d = q[f"NSE:{symbol}"]
             ltp = float(d["last_price"])
             depth = d.get("depth", {})
             if side == "BUY":
                 sells = depth.get("sell", [])
-                ask   = float(sells[0]["price"]) if sells and sells[0].get("price") else 0.0
+                ask = float(sells[0]["price"]) if sells and sells[0].get("price") else 0.0
                 if ask > 0 and ask >= ltp:
                     spread = (ask - ltp) / ltp
-                    slip   = max(spread, self.SLIPPAGE_PCT)
-                    fp     = round(ask, 2)
+                    slip = max(spread, self.SLIPPAGE_PCT)
+                    fp = round(ask, 2)
                 else:
                     slip = self.SLIPPAGE_PCT
-                    fp   = round(ltp * (1 + slip), 2)
-            else:  # SELL
+                    fp = round(ltp * (1 + slip), 2)
+            else:
                 buys = depth.get("buy", [])
-                bid  = float(buys[0]["price"]) if buys and buys[0].get("price") else 0.0
+                bid = float(buys[0]["price"]) if buys and buys[0].get("price") else 0.0
                 if bid > 0 and bid <= ltp:
                     spread = (ltp - bid) / ltp
-                    slip   = max(spread, self.SLIPPAGE_PCT)
-                    fp     = round(bid, 2)
+                    slip = max(spread, self.SLIPPAGE_PCT)
+                    fp = round(bid, 2)
                 else:
                     slip = self.SLIPPAGE_PCT
-                    fp   = round(ltp * (1 - slip), 2)
+                    fp = round(ltp * (1 - slip), 2)
             logger.info(
                 f"L2 fill {symbol} {side}: LTP={ltp:.2f} → fill={fp:.2f}"
                 f" slip={slip*100:.3f}%"
@@ -2080,7 +2046,6 @@ class PaperTradingEngine:
         else:
             tgt = max(tgt, round(price * (1.0 - MAX_TARGET_PCT), 2))
             sl = min(sl, round(price * (1.0 + MAX_SL_PCT), 2))
-        # Validate
         if side == 'BUY':
             if sl >= price or tgt <= price or tgt <= sl:
                 tgt = round(price * (1.0 + self.TARGET_PCT), 2)
@@ -2093,11 +2058,11 @@ class PaperTradingEngine:
     
     def _check_entry_quality(self, df, ind, side, symbol):
         try:
-            price    = float(df['close'].iloc[-1])
-            open_    = float(df['open'].iloc[-1])
-            high_    = float(df['high'].iloc[-1])
-            low_     = float(df['low'].iloc[-1])
-            now      = datetime.now()
+            price = float(df['close'].iloc[-1])
+            open_ = float(df['open'].iloc[-1])
+            high_ = float(df['high'].iloc[-1])
+            low_ = float(df['low'].iloc[-1])
+            now = datetime.now()
             now_mins = now.hour * 60 + now.minute
             def _iv(key, fallback=0.0):
                 try:
@@ -2105,74 +2070,71 @@ class PaperTradingEngine:
                     return fallback if (isinstance(v, float) and np.isnan(v)) else v
                 except Exception:
                     return fallback
-            ema50    = _iv('ema_50',   price)
-            rsi      = _iv('rsi',      50.0)
-            vwap     = _iv('vwap',     0.0)
-            vwap_u1  = _iv('vwap_upper1', price * 1.02)
-            vwap_l1  = _iv('vwap_lower1', price * 0.98)
-            roc5     = _iv('roc5',     0.0)
+            ema50 = _iv('ema_50', price)
+            rsi = _iv('rsi', 50.0)
+            vwap = _iv('vwap', 0.0)
+            vwap_u1 = _iv('vwap_upper1', price * 1.02)
+            vwap_l1 = _iv('vwap_lower1', price * 0.98)
+            roc5 = _iv('roc5', 0.0)
             htf_bull = _iv('htf_bull', 0.5)
-            atr      = _iv('atr',      0.0)
-            avg_vol  = float(df['volume'].iloc[-10:].mean()) if len(df) >= 10 else float(df['volume'].mean())
-            cur_vol  = float(df['volume'].iloc[-1])
-            # Volume filter (time‑adjusted)
+            atr = _iv('atr', 0.0)
+            avg_vol = float(df['volume'].iloc[-10:].mean()) if len(df) >= 10 else float(df['volume'].mean())
+            cur_vol = float(df['volume'].iloc[-1])
             vol_mult = 1.0 if now_mins < 10*60 else 0.5 if now_mins < 13*60 else 0.4
             if cur_vol < avg_vol * vol_mult:
                 return False, (f"Low volume {int(cur_vol):,} < "
                             f"{int(avg_vol * vol_mult):,} "
                             f"({vol_mult}x avg)")
-            # NEW: Volume surge confirmation
             if cur_vol < avg_vol * self.MIN_VOL_SURGE:
                 return False, (f"Volume surge insufficient: {cur_vol/avg_vol:.1f}x < {self.MIN_VOL_SURGE}x")
-            # Candle pattern detection
             def _candle_patterns(df_slice):
                 cp = {}
                 try:
-                    n  = len(df_slice) - 1
-                    c  = float(df_slice['close'].iloc[n])
-                    o  = float(df_slice['open'].iloc[n])
-                    h  = float(df_slice['high'].iloc[n])
-                    l  = float(df_slice['low'].iloc[n])
-                    rng    = max(h - l, 1e-9)
-                    body   = abs(c - o)
+                    n = len(df_slice) - 1
+                    c = float(df_slice['close'].iloc[n])
+                    o = float(df_slice['open'].iloc[n])
+                    h = float(df_slice['high'].iloc[n])
+                    l = float(df_slice['low'].iloc[n])
+                    rng = max(h - l, 1e-9)
+                    body = abs(c - o)
                     body_r = body / rng
-                    uw_r   = (h - max(c, o)) / rng
-                    lw_r   = (min(c, o) - l) / rng
-                    bull   = c >= o
-                    bear   = c < o
-                    cp['DOJI']           = body_r < 0.10
-                    cp['SPINNING_TOP']   = (0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25)
-                    cp['HAMMER']         = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
-                    cp['INVERTED_HAMMER']= (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
-                    cp['SHOOTING_STAR']  = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
-                    cp['HANGING_MAN']    = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
-                    cp['BULL_MARUBOZU']  = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
-                    cp['BEAR_MARUBOZU']  = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
+                    uw_r = (h - max(c, o)) / rng
+                    lw_r = (min(c, o) - l) / rng
+                    bull = c >= o
+                    bear = c < o
+                    cp['DOJI'] = body_r < 0.10
+                    cp['SPINNING_TOP'] = (0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25)
+                    cp['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
+                    cp['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
+                    cp['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
+                    cp['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
+                    cp['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
+                    cp['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
                     if n >= 1:
-                        pc    = float(df_slice['close'].iloc[n-1])
-                        po    = float(df_slice['open'].iloc[n-1])
-                        ph    = float(df_slice['high'].iloc[n-1])
-                        pl    = float(df_slice['low'].iloc[n-1])
+                        pc = float(df_slice['close'].iloc[n-1])
+                        po = float(df_slice['open'].iloc[n-1])
+                        ph = float(df_slice['high'].iloc[n-1])
+                        pl = float(df_slice['low'].iloc[n-1])
                         pbull = pc > po
                         pbear = pc < po
-                        pb    = abs(pc - po)
-                        pm    = (po + pc) / 2.0
-                        cp['BULL_ENGULFING']  = (pbear and bull and o <= pc and c >= po and body >= pb)
-                        cp['BEAR_ENGULFING']  = (pbull and bear and o >= pc and c <= po and body >= pb)
-                        cp['PIERCING_LINE']   = (pbear and bull and o < pl and c > pm and c < po)
-                        cp['DARK_CLOUD_COVER']= (pbull and bear and o > ph and c < pm and c > pc)
-                        cp['TWEEZER_TOP']     = (pbull and bear and abs(h - ph) / rng < 0.05)
-                        cp['TWEEZER_BOTTOM']  = (pbear and bull and abs(l - pl) / rng < 0.05)
+                        pb = abs(pc - po)
+                        pm = (po + pc) / 2.0
+                        cp['BULL_ENGULFING'] = (pbear and bull and o <= pc and c >= po and body >= pb)
+                        cp['BEAR_ENGULFING'] = (pbull and bear and o >= pc and c <= po and body >= pb)
+                        cp['PIERCING_LINE'] = (pbear and bull and o < pl and c > pm and c < po)
+                        cp['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < pm and c > pc)
+                        cp['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
+                        cp['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
                     if n >= 2:
-                        c2  = float(df_slice['close'].iloc[n-2])
-                        o2  = float(df_slice['open'].iloc[n-2])
-                        c1  = float(df_slice['close'].iloc[n-1])
-                        o1  = float(df_slice['open'].iloc[n-1])
-                        h1  = float(df_slice['high'].iloc[n-1])
-                        l1  = float(df_slice['low'].iloc[n-1])
-                        rng1   = max(h1 - l1, 1e-9)
-                        body1  = abs(c1 - o1) / rng1
-                        mid2   = (o2 + c2) / 2.0
+                        c2 = float(df_slice['close'].iloc[n-2])
+                        o2 = float(df_slice['open'].iloc[n-2])
+                        c1 = float(df_slice['close'].iloc[n-1])
+                        o1 = float(df_slice['open'].iloc[n-1])
+                        h1 = float(df_slice['high'].iloc[n-1])
+                        l1 = float(df_slice['low'].iloc[n-1])
+                        rng1 = max(h1 - l1, 1e-9)
+                        body1 = abs(c1 - o1) / rng1
+                        mid2 = (o2 + c2) / 2.0
                         cp['MORNING_STAR'] = (c2 < o2 and body1 < 0.30 and bull and c > mid2)
                         cp['EVENING_STAR'] = (c2 > o2 and body1 < 0.30 and bear and c < mid2)
                         cp['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50)
@@ -2181,19 +2143,16 @@ class PaperTradingEngine:
                     logger.debug(f"_candle_patterns error: {e}")
                 return cp
             cp = _candle_patterns(df)
-            # Hard veto for BUY
             if side == 'BUY':
                 bearish_veto = ['SHOOTING_STAR','EVENING_STAR','BEAR_ENGULFING','DARK_CLOUD_COVER','HANGING_MAN','THREE_BLACK_CROWS','BEAR_MARUBOZU','TWEEZER_TOP']
                 triggered = [p for p in bearish_veto if cp.get(p)]
                 if triggered:
                     return False, (f"Bearish candle pattern on trigger bar: {', '.join(triggered)}")
-            # Hard veto for SELL
             if side == 'SELL':
                 bullish_veto = ['HAMMER','MORNING_STAR','BULL_ENGULFING','PIERCING_LINE','INVERTED_HAMMER','THREE_WHITE_SOLDIERS','BULL_MARUBOZU','TWEEZER_BOTTOM']
                 triggered = [p for p in bullish_veto if cp.get(p)]
                 if triggered:
                     return False, (f"Bullish candle pattern on trigger bar: {', '.join(triggered)}")
-            # Exhaustion checks
             if side == 'BUY':
                 if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
                     return False, (f"Price extended above VWAP+1σ ({price:.2f} > {vwap_u1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
@@ -2204,22 +2163,18 @@ class PaperTradingEngine:
                     return False, (f"Price extended below VWAP-1σ ({price:.2f} < {vwap_l1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
                 if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
                     return False, (f"Price > 2×ATR below VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late short entry")
-            # HTF RSI overbought/oversold
             if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
                 return False, (f"Overbought — RSI {rsi:.1f} > 72 and HTF bull strength {htf_bull:.2f} > 0.85 (chasing a tired move)")
             if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
                 return False, (f"Oversold — RSI {rsi:.1f} < 28 and HTF bull {htf_bull:.2f} < 0.15 (shorting into exhaustion)")
-            # EMA50 proximity
             if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
                 return False, (f"BUY price {price:.2f} is >2% below EMA50 {ema50:.2f} — counter-trend long")
             if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
                 return False, (f"SELL price {price:.2f} is >2% above EMA50 {ema50:.2f} — counter-trend short")
-            # RSI extremes
             if side == 'BUY' and rsi > 75:
                 return False, f"BUY into overbought RSI {rsi:.1f} > 75"
             if side == 'SELL' and rsi < 25:
                 return False, f"SELL into oversold RSI {rsi:.1f} < 25"
-            # SELL below VWAP
             if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
                 return False, (f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing the move down")
             return True, None
@@ -2249,7 +2204,6 @@ class PaperTradingEngine:
         if mins >= self.NO_NEW_TRADES_AFTER:
             _block(f"After cutoff {now.strftime('%H:%M')} >= 14:30")
             return None
-        # TIME SLOT GATE — defense-in-depth check inside position opener
         if not _in_trade_slot(mins):
             _block(
                 f"Outside trade slot [{_slot_label(mins)}] — "
@@ -2259,7 +2213,6 @@ class PaperTradingEngine:
         if price < self.MIN_PRICE:
             _block(f"Price {price:.2f} below min {self.MIN_PRICE}")
             return None
-        # Gap filter
         try:
             if df is not None and len(df) > 20 and 'date' in df.columns:
                 today_str = datetime.now().strftime('%Y-%m-%d')
@@ -2276,13 +2229,11 @@ class PaperTradingEngine:
                         return None
         except Exception:
             pass
-        # Entry quality
         if df is not None and ind is not None:
             ok, quality_reason = self._check_entry_quality(df, ind, side, symbol)
             if not ok:
                 _block(f"Quality check failed: {quality_reason}")
                 return None
-        # Position sizing — v9.2: pass ATR for dynamic risk-based sizing
         qty, margin_used, margin_pct, margin_source = self._smart_allocation_time_based(price, now, symbol=symbol, side=side, atr=atr)
         if qty == 0:
             wallet = self.data['wallet']
@@ -2297,7 +2248,6 @@ class PaperTradingEngine:
                 reduction = 0.25 if (12*60+30 < slot_m < 14*60+0) else (0.75 if (14*60+0 <= slot_m <= 15*60+30) else 1.0)
                 _block(f"Qty reduced to 0 by slot factor {reduction*100:.0f}% [{_slot_label(slot_m)}]")
             return None
-        # Calculate targets
         if atr and atr > 0:
             target, stoploss = self._calculate_atr_targets(price, atr, side)
         else:
@@ -2307,14 +2257,12 @@ class PaperTradingEngine:
             else:
                 target = round(price * (1 - self.TARGET_PCT), 2)
                 stoploss = round(price * (1 + self.STOPLOSS_PCT), 2)
-        # Apply minimum moves
         if side == 'BUY':
             target = max(target, price + self.MIN_ABSOLUTE_MOVE)
             stoploss = min(stoploss, price - self.MIN_ABSOLUTE_MOVE)
         else:
             target = min(target, price - self.MIN_ABSOLUTE_MOVE)
             stoploss = max(stoploss, price + self.MIN_ABSOLUTE_MOVE)
-        # ── v9.2: L2 order-book fill price (best ask / best bid) ─────────
         fill_price, actual_slip_pct = self._get_l2_execution_price(symbol, side)
         if fill_price is None or fill_price <= 0:
             fill_price = round(
@@ -2344,7 +2292,7 @@ class PaperTradingEngine:
             'margin_pct': margin_pct,
             'leverage': round(1 / margin_pct, 2) if margin_pct > 0 else 5.0,
             'margin_source': margin_source,
-            'entry_slip_pct': actual_slip_pct,  # v9.2: actual L2 slippage at fill
+            'entry_slip_pct': actual_slip_pct,
         }
         self.data['positions'][symbol] = pos
         self.active_stock_orders[symbol] = now
@@ -2371,7 +2319,6 @@ class PaperTradingEngine:
         gross_pnl = chg['gross_pnl']
         net_pnl = chg['net_pnl']
         margin_used = pos.get('margin_used', entry * qty)
-        # Update strategy performance
         if strategy_name not in self.strategy_performance:
             self.strategy_performance[strategy_name] = {
                 'wins': 0, 'losses': 0, 'total_pnl': 0.0,
@@ -2549,7 +2496,7 @@ class PaperTradingEngine:
         log_entry['timestamp'] = datetime.now().isoformat()
         self._signal_logs.appendleft(log_entry)
         with self._lock:
-            self.data['signal_logs'] = list(self._signal_logs)[:1000]
+            self.data['signal_logs'] = list(self._signal_logs)[:5000]
             self._save()
         if log_entry.get('status') in ['BUY_SIGNAL', 'SELL_SIGNAL']:
             logger.info(f"SIGNAL {log_entry['symbol']} {log_entry['status']} {log_entry.get('reason', '')}")
@@ -2564,12 +2511,6 @@ class PaperTradingEngine:
         return sp.get('win_rate', 0) >= self.STRATEGY_MIN_WIN_RATE
     
     def _get_sector_bias(self, symbol):
-        """
-        v9.2 — Return the current sector direction for *symbol* from the
-        cached SectorMonitor results, or None if the cache is stale / missing.
-
-        Returns: 'BUY', 'SELL', or None
-        """
         now = time.time()
         for sector, stocks in SECTOR_MAP.items():
             if symbol in stocks:
@@ -2579,11 +2520,11 @@ class PaperTradingEngine:
                 return None, sector, None
         return None, None, None
 
-    def _check_signal(self, symbol, prefetched_ltp=None):
+    def _check_signal(self, symbol, kite, prefetched_ltp=None):
         if symbol not in SYMBOL_MAP:
             return
         try:
-            now  = datetime.now()
+            now = datetime.now()
             mins = now.hour * 60 + now.minute
  
             if self.MARKET_OPEN <= mins < self.MARKET_OPEN + 15:
@@ -2591,14 +2532,9 @@ class PaperTradingEngine:
             if mins >= self.MARKET_CLOSE:
                 return
 
-            # ── TIME SLOT GATE (new entry only) ──────────────────────────
-            # Allow monitoring & exit at any time, but only OPEN new trades
-            # during the three high-quality slots.
-            # We record the current slot so the log entry can show it.
-            _current_slot_ok  = _in_trade_slot(mins)
+            _current_slot_ok = _in_trade_slot(mins)
             _current_slot_lbl = _slot_label(mins)
  
-            # ── 5-min historical (counts against 3/sec hist limit) ──
             _hist_limiter.wait(f"5min {symbol}")
             data5 = kite.historical_data(
                 SYMBOL_MAP[symbol]["token"],
@@ -2609,12 +2545,9 @@ class PaperTradingEngine:
             if not data5 or len(data5) < 80:
                 return
  
-            df        = pd.DataFrame(data5)
-            ind       = Indicators.calculate_all(df)
+            df = pd.DataFrame(data5)
+            ind = Indicators.calculate_all(df)
  
-            # Use the batch-fetched price when available; fall back to
-            # last candle close.  We do NOT call kite.ltp() here —
-            # that would burn the 1 req/sec quote budget for every symbol.
             ltp_initial = (
                 prefetched_ltp
                 if prefetched_ltp is not None
@@ -2632,14 +2565,14 @@ class PaperTradingEngine:
             if cur_vol < avg_vol * vol_mult:
                 self._add_signal_log(
                     {
-                        "time":       now.strftime("%H:%M:%S"),
-                        "date":       now.strftime("%Y-%m-%d"),
-                        "symbol":     symbol,
-                        "ltp":        round(ltp_initial, 2),
-                        "volume":     cur_vol,
+                        "time": now.strftime("%H:%M:%S"),
+                        "date": now.strftime("%Y-%m-%d"),
+                        "symbol": symbol,
+                        "ltp": round(ltp_initial, 2),
+                        "volume": cur_vol,
                         "avg_volume": int(avg_vol),
-                        "status":     "REJECTED",
-                        "reason":     (
+                        "status": "REJECTED",
+                        "reason": (
                             f"Low volume {cur_vol:,} < "
                             f"{int(avg_vol*vol_mult):,} ({vol_mult}× avg)"
                         ),
@@ -2647,27 +2580,26 @@ class PaperTradingEngine:
                 )
                 return
  
-            pin_meta  = self.data.get("pinned_meta", {}).get(symbol, {})
-            pin_dir   = pin_meta.get("direction", "BOTH")
-            allow_buy  = pin_dir in ("BUY",  "BOTH")
+            pin_meta = self.data.get("pinned_meta", {}).get(symbol, {})
+            pin_dir = pin_meta.get("direction", "BOTH")
+            allow_buy = pin_dir in ("BUY", "BOTH")
             allow_sell = pin_dir in ("SELL", "BOTH")
  
-            g         = _panel_gates(ind, len(df) - 1)
-            df_w      = df.iloc[-60:].reset_index(drop=True)
-            ind_w     = ind.iloc[-60:].reset_index(drop=True)
+            g = _panel_gates(ind, len(df) - 1)
+            df_w = df.iloc[-60:].reset_index(drop=True)
+            ind_w = ind.iloc[-60:].reset_index(drop=True)
  
-            strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w)
-            st5_total  = strat5_b + strat5_s
+            strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
+            st5_total = strat5_b + strat5_s
             s5_buy_pct = strat5_b / st5_total * 100 if st5_total > 0 else 50.0
             s5_sel_pct = strat5_s / st5_total * 100 if st5_total > 0 else 50.0
  
-            htf15_buy_pct  = 50.0
-            htf15_sel_pct  = 50.0
-            htf15_ok_buy   = False
-            htf15_ok_sell  = False
+            htf15_buy_pct = 50.0
+            htf15_sel_pct = 50.0
+            htf15_ok_buy = False
+            htf15_ok_sell = False
  
             try:
-                # ── 15-min historical (also counts against 3/sec) ──
                 _hist_limiter.wait(f"15min signal {symbol}")
                 data15 = kite.historical_data(
                     SYMBOL_MAP[symbol]["token"],
@@ -2676,30 +2608,30 @@ class PaperTradingEngine:
                     "15minute",
                 )
                 if data15 and len(data15) >= 40:
-                    df15   = pd.DataFrame(data15)
-                    ind15  = Indicators.calculate_all(df15)
+                    df15 = pd.DataFrame(data15)
+                    ind15 = Indicators.calculate_all(df15)
                     df15_w = df15.iloc[-40:].reset_index(drop=True)
                     ind15_w = ind15.iloc[-40:].reset_index(drop=True)
-                    b15, s15, _ = _strat_votes(df15_w, ind15_w)
-                    t15         = b15 + s15
-                    htf15_buy_pct  = b15 / t15 * 100 if t15 > 0 else 50.0
-                    htf15_sel_pct  = s15 / t15 * 100 if t15 > 0 else 50.0
-                    htf15_ok_buy   = htf15_buy_pct >= self.MIN_VOTE_PCT
-                    htf15_ok_sell  = htf15_sel_pct >= self.MIN_VOTE_PCT
+                    b15, s15, _ = _strat_votes(df15_w, ind15_w, self.strategies_dict)
+                    t15 = b15 + s15
+                    htf15_buy_pct = b15 / t15 * 100 if t15 > 0 else 50.0
+                    htf15_sel_pct = s15 / t15 * 100 if t15 > 0 else 50.0
+                    htf15_ok_buy = htf15_buy_pct >= self.MIN_VOTE_PCT
+                    htf15_ok_sell = htf15_sel_pct >= self.MIN_VOTE_PCT
             except Exception as e:
                 logger.debug(f"15-min data error {symbol}: {e}")
  
-            soft_b = sum([g.get(f"p{i}_buy",  0) for i in [1, 2, 3, 4, 5, 10]])
+            soft_b = sum([g.get(f"p{i}_buy", 0) for i in [1, 2, 3, 4, 5, 10]])
             soft_s = sum([g.get(f"p{i}_sell", 0) for i in [1, 2, 3, 4, 5, 10]])
  
-            buy_score  = soft_b * 15.0 + g.get("buy_bonus",  0) + s5_buy_pct * 0.2
+            buy_score = soft_b * 15.0 + g.get("buy_bonus", 0) + s5_buy_pct * 0.2
             sell_score = soft_s * 15.0 + g.get("sell_bonus", 0) + s5_sel_pct * 0.2
  
             if not g.get("p8_ok", True):
-                buy_score  -= 15.0
+                buy_score -= 15.0
                 sell_score -= 15.0
             if not g.get("p9_ok", True):
-                buy_score  -= 10.0
+                buy_score -= 10.0
                 sell_score -= 10.0
  
             htf_bull = (
@@ -2708,77 +2640,63 @@ class PaperTradingEngine:
                 else 0.5
             )
  
-            # ── p6 (Supertrend) advisory bonus — not a hard gate ──────────
-            # Supertrend flips slowly on 5-min; making it mandatory killed
-            # ~60% of valid signals.  Instead add a big score bonus when it
-            # aligns, and a small penalty when it conflicts.
             if g.get("p6_buy", False):
-                buy_score  += 8.0
+                buy_score += 8.0
             elif g.get("p6_sell", False):
-                buy_score  -= 4.0
+                buy_score -= 4.0
             if g.get("p6_sell", False):
                 sell_score += 8.0
             elif g.get("p6_buy", False):
                 sell_score -= 4.0
 
-            # ── HTF-15m advisory: conflict penalises score, not hard block ─
-            htf15_conflict_buy  = htf15_ok_sell and not htf15_ok_buy
-            htf15_conflict_sell = htf15_ok_buy  and not htf15_ok_sell
+            htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
+            htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
             if htf15_conflict_buy:
-                buy_score  -= 10.0
+                buy_score -= 10.0
             if htf15_conflict_sell:
                 sell_score -= 10.0
 
-            # ── Counter-trend protection (v9.1) ──────────────────────────
-            dual_conflict_buy  = g.get("p6_sell", False) and htf15_conflict_buy
-            dual_conflict_sell = g.get("p6_buy",  False) and htf15_conflict_sell
-            effective_buy_min  = (self.MIN_HTF_ALIGN_SCORE
-                                  if dual_conflict_buy else self.MIN_SIGNAL_SCORE)
-            effective_sell_min = (self.MIN_HTF_ALIGN_SCORE
-                                  if dual_conflict_sell else self.MIN_SIGNAL_SCORE)
+            dual_conflict_buy = g.get("p6_sell", False) and htf15_conflict_buy
+            dual_conflict_sell = g.get("p6_buy", False) and htf15_conflict_sell
+            effective_buy_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_buy else self.MIN_SIGNAL_SCORE)
+            effective_sell_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_sell else self.MIN_SIGNAL_SCORE)
 
-            # ── v9.2: Sector Correlation Scoring ─────────────────────────
-            # Reads the live sector-bias cache (populated by SectorMonitor
-            # every 60 s).  Tailwind → +SECTOR_BIAS_SCORE on aligned side;
-            # Headwind → -SECTOR_BIAS_SCORE on opposing side.
-            # e.g. buying INFY while IT sector is crashing → -6 pts on BUY score.
             _sec_dir, _sec_name, _sec_meta = self._get_sector_bias(symbol)
             sector_bias_log = ""
             if _sec_dir and _sec_name:
                 if _sec_dir == "BUY":
-                    buy_score  += self.SECTOR_BIAS_SCORE
+                    buy_score += self.SECTOR_BIAS_SCORE
                     sell_score -= self.SECTOR_BIAS_SCORE
                     sector_bias_log = f"Sector {_sec_name} BULLISH → +{self.SECTOR_BIAS_SCORE:.0f} BUY"
-                else:  # SELL
+                else:
                     sell_score += self.SECTOR_BIAS_SCORE
-                    buy_score  -= self.SECTOR_BIAS_SCORE
+                    buy_score -= self.SECTOR_BIAS_SCORE
                     sector_bias_log = f"Sector {_sec_name} BEARISH → +{self.SECTOR_BIAS_SCORE:.0f} SELL"
                 logger.debug(f"[{symbol}] {sector_bias_log}")
 
-            # ── htf_bull: widened band (0.45/0.55) ───────────────────────
             buy_ok = (
                 allow_buy
                 and htf_bull >= 0.45
-                and soft_b   >= self.MIN_SOFT_LAYERS
+                and soft_b >= self.MIN_SOFT_LAYERS
                 and s5_buy_pct >= self.MIN_VOTE_PCT
-                and buy_score  >= effective_buy_min
+                and buy_score >= effective_buy_min
             )
             sell_ok = (
                 allow_sell
                 and htf_bull <= 0.55
-                and soft_s   >= self.MIN_SOFT_LAYERS
+                and soft_s >= self.MIN_SOFT_LAYERS
                 and s5_sel_pct >= self.MIN_VOTE_PCT
                 and sell_score >= effective_sell_min
             )
  
             if buy_ok and sell_ok:
                 if sell_score > buy_score:
-                    buy_ok  = False
+                    buy_ok = False
                 else:
                     sell_ok = False
  
             all_triggered = []
-            for name, func in all_strategies.items():
+            for name, func in self.strategies_dict.items():
                 try:
                     if func(df_w, ind_w):
                         all_triggered.append(name)
@@ -2787,36 +2705,36 @@ class PaperTradingEngine:
  
             direction_triggered = [
                 n for n in all_triggered
-                if (allow_buy  and any(k in n for k in BUY_KW))
+                if (allow_buy and any(k in n for k in BUY_KW))
                 or (allow_sell and any(k in n for k in SELL_KW))
                 or (not any(k in n for k in BUY_KW + SELL_KW))
             ]
  
             best_strategy = None
-            best_sc       = -1
+            best_sc = -1
             for name in direction_triggered:
                 sc = 70 + len(direction_triggered) * 5
                 if self._should_use_strategy(name):
                     sc += 10
                 if sc > best_sc:
-                    best_sc       = sc
+                    best_sc = sc
                     best_strategy = name
  
             if not best_strategy and (buy_ok or sell_ok):
                 best_strategy = "PANEL_SIGNAL"
  
-            atr         = float(ind["atr"].iloc[-1]) if "atr" in ind.columns else None
-            nifty_data  = get_nifty_data()
+            atr = float(ind["atr"].iloc[-1]) if "atr" in ind.columns else None
+            nifty_data = get_nifty_data(kite)
  
             if nifty_data:
-                market_trend  = (
-                    "BULLISH"  if nifty_data["change"] >  0.3
+                market_trend = (
+                    "BULLISH" if nifty_data["change"] > 0.3
                     else "BEARISH" if nifty_data["change"] < -0.3
                     else "NEUTRAL"
                 )
                 market_regime = "TRENDING" if nifty_data["adx"] > 25 else "RANGING"
             else:
-                market_trend  = "NEUTRAL"
+                market_trend = "NEUTRAL"
                 market_regime = "UNKNOWN"
  
             skip_breakout = (
@@ -2826,33 +2744,33 @@ class PaperTradingEngine:
             )
  
             log_entry = {
-                "time":           now.strftime("%H:%M:%S"),
-                "date":           now.strftime("%Y-%m-%d"),
-                "symbol":         symbol,
-                "ltp":            round(ltp_initial, 2),
-                "volume":         int(df["volume"].iloc[-1]),
-                "avg_volume":     int(avg_vol),
-                "buy_score":      round(buy_score,  1),
-                "sell_score":     round(sell_score, 1),
-                "soft_b":         soft_b,
-                "soft_s":         soft_s,
-                "vote_b":         round(s5_buy_pct,  1),
-                "vote_s":         round(s5_sel_pct,  1),
-                "htf15_buy_pct":  round(htf15_buy_pct, 1),
-                "htf15_sel_pct":  round(htf15_sel_pct, 1),
-                "hard_buy":       buy_ok,
-                "hard_sell":      sell_ok,
-                "p6_buy":         g.get("p6_buy",  False),
-                "p6_sell":        g.get("p6_sell", False),
-                "htf_bull":       round(htf_bull, 3),
-                "strategies":     direction_triggered[:5],
+                "time": now.strftime("%H:%M:%S"),
+                "date": now.strftime("%Y-%m-%d"),
+                "symbol": symbol,
+                "ltp": round(ltp_initial, 2),
+                "volume": int(df["volume"].iloc[-1]),
+                "avg_volume": int(avg_vol),
+                "buy_score": round(buy_score, 1),
+                "sell_score": round(sell_score, 1),
+                "soft_b": soft_b,
+                "soft_s": soft_s,
+                "vote_b": round(s5_buy_pct, 1),
+                "vote_s": round(s5_sel_pct, 1),
+                "htf15_buy_pct": round(htf15_buy_pct, 1),
+                "htf15_sel_pct": round(htf15_sel_pct, 1),
+                "hard_buy": buy_ok,
+                "hard_sell": sell_ok,
+                "p6_buy": g.get("p6_buy", False),
+                "p6_sell": g.get("p6_sell", False),
+                "htf_bull": round(htf_bull, 3),
+                "strategies": direction_triggered[:5],
                 "all_strategies": all_triggered[:8],
-                "pin_dir":        pin_dir,
-                "pin_rec":        pin_meta.get("recommendation", ""),
-                "best_strategy":  best_strategy,
-                "sector_bias":    sector_bias_log,
-                "market_trend":   market_trend,
-                "market_regime":  market_regime,
+                "pin_dir": pin_dir,
+                "pin_rec": pin_meta.get("recommendation", ""),
+                "best_strategy": best_strategy,
+                "sector_bias": sector_bias_log,
+                "market_trend": market_trend,
+                "market_regime": market_regime,
             }
  
             try:
@@ -2865,14 +2783,12 @@ class PaperTradingEngine:
                 pos = self.data["positions"].get(symbol)
  
                 if pos:
-                    log_entry["status"]    = "IN_POSITION"
-                    log_entry["pos_side"]  = pos["side"]
+                    log_entry["status"] = "IN_POSITION"
+                    log_entry["pos_side"] = pos["side"]
                     log_entry["pos_entry"] = pos["entry_price"]
-                    log_entry["pos_qty"]   = pos["qty"]
+                    log_entry["pos_qty"] = pos["qty"]
                     self._add_signal_log(log_entry)
  
-                    # Use the pre-fetched price; only fall back to a
-                    # fresh LTP call when we have nothing at all.
                     fresh_ltp = (
                         prefetched_ltp
                         if prefetched_ltp is not None
@@ -2927,7 +2843,6 @@ class PaperTradingEngine:
                     self._save()
                     return
  
-                # ── pre-entry gates ────────────────────────────
                 if mins >= self.NO_NEW_TRADES_AFTER:
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
@@ -2936,7 +2851,6 @@ class PaperTradingEngine:
                     self._add_signal_log(log_entry)
                     return
 
-                # TIME SLOT GATE — block new trade entries outside high-quality slots
                 if not _current_slot_ok:
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
@@ -2976,7 +2890,7 @@ class PaperTradingEngine:
                         return True
                     if market_trend == "BULLISH" and trade_side == "SELL" and symbol in HEAVYWEIGHTS:
                         return False
-                    if market_trend == "BEARISH" and trade_side == "BUY"  and symbol in HEAVYWEIGHTS:
+                    if market_trend == "BEARISH" and trade_side == "BUY" and symbol in HEAVYWEIGHTS:
                         return False
                     return True
  
@@ -2999,7 +2913,6 @@ class PaperTradingEngine:
                     return
  
                 if buy_ok:
-                    # Fresh quote only at the instant of order placement
                     _quote_limiter.wait(f"order_ltp BUY {symbol}")
                     ltp_for_order = kite.ltp([f"NSE:{symbol}"])
                     ltp_for_order = (
@@ -3008,7 +2921,7 @@ class PaperTradingEngine:
                         else ltp_initial
                     )
                     log_entry["status"] = "BUY_SIGNAL"
-                    log_entry["ltp"]    = round(ltp_for_order, 2)
+                    log_entry["ltp"] = round(ltp_for_order, 2)
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(buy_score,1)}) | "
                         f"Layers: {soft_b} | 5m Vote: {round(s5_buy_pct,1)}% | "
@@ -3041,7 +2954,7 @@ class PaperTradingEngine:
                         else ltp_initial
                     )
                     log_entry["status"] = "SELL_SIGNAL"
-                    log_entry["ltp"]    = round(ltp_for_order, 2)
+                    log_entry["ltp"] = round(ltp_for_order, 2)
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(sell_score,1)}) | "
                         f"Layers: {soft_s} | 5m Vote: {round(s5_sel_pct,1)}% | "
@@ -3066,13 +2979,12 @@ class PaperTradingEngine:
                         self._save()
  
                 else:
-                    # ── "why no signal" diagnostic (v9.1 — counter-trend protection) ──
                     reasons = []
-                    raw_buy_ok  = (
+                    raw_buy_ok = (
                         htf_bull >= 0.45
                         and soft_b >= self.MIN_SOFT_LAYERS
                         and s5_buy_pct >= self.MIN_VOTE_PCT
-                        and buy_score  >= effective_buy_min
+                        and buy_score >= effective_buy_min
                     )
                     raw_sell_ok = (
                         htf_bull <= 0.55
@@ -3080,15 +2992,15 @@ class PaperTradingEngine:
                         and s5_sel_pct >= self.MIN_VOTE_PCT
                         and sell_score >= effective_sell_min
                     )
-                    if raw_buy_ok  and not allow_buy:
+                    if raw_buy_ok and not allow_buy:
                         reasons.append(f"BUY signal blocked — stock pinned as {pin_dir} only")
                     if raw_sell_ok and not allow_sell:
                         reasons.append(f"SELL signal blocked — stock pinned as {pin_dir} only")
 
                     if not reasons:
                         leaning_buy = buy_score >= sell_score
-                        check_dir   = (
-                            "BUY"  if (pin_dir == "BOTH" and leaning_buy)
+                        check_dir = (
+                            "BUY" if (pin_dir == "BOTH" and leaning_buy)
                             else pin_dir if pin_dir != "BOTH"
                             else ("BUY" if leaning_buy else "SELL")
                         )
@@ -3161,8 +3073,8 @@ class PaperTradingEngine:
             try:
                 self._add_signal_log(
                     {
-                        "time":   datetime.now().strftime("%H:%M:%S"),
-                        "date":   datetime.now().strftime("%Y-%m-%d"),
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
                         "symbol": symbol,
                         "status": "ERROR",
                         "reason": str(e)[:150],
@@ -3174,40 +3086,28 @@ class PaperTradingEngine:
     def _monitor_loop(self):
         logger.info("Monitor started")
         squaredoff_today = None
-        check_counter    = 0
-        last_health      = datetime.now()
-        error_count      = 0
+        check_counter = 0
+        last_health = datetime.now()
+        error_count = 0
  
         while self._running:
             try:
-                now     = datetime.now()
-                today   = now.date()
-                mins    = now.hour * 60 + now.minute
+                now = datetime.now()
+                today = now.date()
+                mins = now.hour * 60 + now.minute
                 is_wday = now.weekday() < 5
                 self._last_heartbeat = now
- 
-                # ── square off ───────────────────────────────
-                if (
-                    is_wday
-                    and mins >= self.SQUARE_OFF_TIME
-                    and squaredoff_today != today
-                ):
+
+                if is_wday and mins >= self.SQUARE_OFF_TIME and squaredoff_today != today:
                     if self.data["positions"]:
                         self._squareoff_all()
                     squaredoff_today = today
- 
-                # ── main monitoring cycle ─────────────────────
+
                 if is_wday and self.MARKET_OPEN <= mins <= self.MARKET_CLOSE:
- 
                     with self._lock:
-                        pinned    = list(self.data.get("pinned", []))
+                        pinned = list(self.data.get("pinned", []))
                         positions = list(self.data.get("positions", {}).keys())
- 
                     all_syms = list(set(pinned + positions))
- 
-                    # ── ONE batch LTP for every symbol we care about ──
-                    # This is 1 Quote API call regardless of how many
-                    # symbols are in the list (up to ~500).
                     if all_syms:
                         try:
                             batch_prices = self._get_batch_ltp(all_syms)
@@ -3216,36 +3116,20 @@ class PaperTradingEngine:
                             batch_prices = {}
                     else:
                         batch_prices = {}
- 
-                    # ── per-symbol signal check ───────────────
                     for sym in all_syms:
-                        # Pass the pre-fetched LTP so _check_signal
-                        # does NOT make its own ltp() call.
                         prefetched_ltp = batch_prices.get(sym)
-                        self._check_signal(sym, prefetched_ltp=prefetched_ltp)
-                        # No extra sleep here — the historical calls
-                        # inside _check_signal are throttled by
-                        # _hist_limiter (3 req/sec).
- 
+                        self._check_signal(sym, self._kite, prefetched_ltp=prefetched_ltp)
                     check_counter += 1
                     if check_counter % 30 == 0:
                         with self._lock:
-                            logger.info(
-                                f"Monitoring {len(pinned)} pinned + "
-                                f"{len(positions)} positions  |  "
-                                f"batch_ltp covered {len(all_syms)} symbols"
-                            )
+                            logger.info(f"Monitoring {len(pinned)} pinned + {len(positions)} positions  |  batch_ltp covered {len(all_syms)} symbols")
                     error_count = 0
- 
+
                 if (now - last_health).total_seconds() > 60:
                     last_health = now
                     logger.debug(f"Health OK {now.strftime('%H:%M:%S')}")
- 
-                # Sleep 1 s between full cycles.
-                # The batch LTP above counts as exactly 1 Quote call
-                # per cycle regardless of symbol count — well within 1/sec.
+
                 time.sleep(1)
- 
             except Exception as e:
                 error_count += 1
                 logger.error(f"Monitor loop error: {e}")
@@ -3256,7 +3140,8 @@ class PaperTradingEngine:
                     break
                 time.sleep(5)
     
-    def start(self):
+    def start(self, kite):
+        self._kite = kite
         if not self._running:
             self._running = True
             self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -3368,7 +3253,7 @@ class PaperTradingEngine:
     
     def _scan_for_pinnable_stocks(self, max_results=50):
         ACTIONABLE = {'STRONG BUY', 'BUY', 'STRONG SELL', 'SELL'}
-        live_results = full_scanner.get_results(limit=500)
+        live_results = self.scanner.get_results(limit=500)
         if live_results:
             pinned = set(self.data.get('pinned', []))
             filtered = []
@@ -3377,7 +3262,7 @@ class PaperTradingEngine:
                 if r.get('recommendation', 'NEUTRAL') in ACTIONABLE:
                     filtered.append(r)
             return filtered[:max_results]
-        scan_file = 'scan_results.json'
+        scan_file = self.config.SCAN_FILE
         if not os.path.exists(scan_file):
             return []
         try:
@@ -3445,18 +3330,13 @@ class PaperTradingEngine:
 
 # ==================== SECTOR MONITOR ====================
 class SectorMonitor:
-    """
-    Periodically analyzes sector indices (aggregate of stocks) and generates
-    buy/sell signals. When a sector signal appears, the strongest stock in that
-    sector is automatically traded using the PaperTradingEngine.
-    """
     def __init__(self, paper_engine):
         self.paper_engine = paper_engine
         self.sector_map = SECTOR_MAP
         self._running = False
         self._thread = None
-        self._last_signal_time = {}      # per sector cooldown
-        self._cooldown_seconds = 120     # 2 minutes between trades from same sector
+        self._last_signal_time = {}
+        self._cooldown_seconds = 120
         logger.info("SectorMonitor initialized")
 
     def start(self):
@@ -3474,20 +3354,14 @@ class SectorMonitor:
         logger.info("SectorMonitor stopped")
 
     def _monitor_loop(self):
-        """
-        Main loop: runs every 60 seconds, fetches sector data,
-        checks for signals, and triggers trades.
-        """
         while self._running:
             try:
                 now = datetime.now()
-                # Only run during market hours (9:15 to 15:30)
                 mins = now.hour * 60 + now.minute
                 if not (9*60+15 <= mins <= 15*60+30):
                     time.sleep(30)
                     continue
 
-                # Only generate new sector trades during high-quality time slots
                 if not _in_trade_slot(mins):
                     logger.debug(f"SectorMonitor: outside trade slot [{_slot_label(mins)}] — skipping")
                     time.sleep(30)
@@ -3499,88 +3373,69 @@ class SectorMonitor:
                         continue
                     signal = self._analyze_sector(sector, stocks)
                     if signal:
-                        # Check cooldown
                         last = self._last_signal_time.get(sector)
                         if last and (now - last).total_seconds() < self._cooldown_seconds:
                             continue
                         self._last_signal_time[sector] = now
                         self._execute_sector_trade(sector, signal)
-                time.sleep(60)   # scan every minute
+                time.sleep(60)
             except Exception as e:
                 logger.error(f"SectorMonitor loop error: {e}")
                 time.sleep(10)
 
     def _analyze_sector(self, sector, stocks):
-        """
-        Compute sector-level metrics:
-        - Average % change over last 5 minutes (or simple close-to-close)
-        - Volume surge (total volume vs average)
-        - RSI (using 5-min candles of a representative index)
-        - Returns 'BUY', 'SELL', or None
-        """
         try:
-            # Use the first few stocks to compute aggregate (limit to 10 to keep API calls sane)
             sample = stocks[:10]
-            # Fetch current LTP for all stocks in batch
             batch_prices = self.paper_engine._get_batch_ltp(sample)
             if not batch_prices:
                 return None
 
-            # Fetch 5-min historical for a representative index (e.g., sector ETF or first stock)
-            # We'll use the first stock's 5-min data as a proxy for sector momentum.
             rep_stock = sample[0]
             token = SYMBOL_MAP.get(rep_stock, {}).get("token")
             if not token:
                 return None
 
-            # Fetch last 10 5-min bars
             end = datetime.now()
-            start = end - timedelta(hours=1)   # enough for 12 bars
+            start = end - timedelta(hours=1)
             _hist_limiter.wait(f"sector {sector}")
-            data = kite.historical_data(token, start, end, "5minute")
+            data = self.paper_engine._kite.historical_data(token, start, end, "5minute")
             if not data or len(data) < 5:
                 return None
 
             df = pd.DataFrame(data)
-            # Simple technicals for the proxy
             close = df['close'].iloc[-1]
             prev_close = df['close'].iloc[-2]
             change_5min = (close - prev_close) / prev_close * 100 if prev_close else 0
 
-            # Volume surge: compare last volume to average of last 5 bars
             cur_vol = df['volume'].iloc[-1]
             avg_vol = df['volume'].iloc[-5:].mean()
             vol_ratio = cur_vol / avg_vol if avg_vol > 0 else 1.0
 
-            # RSI (simple 14-period)
             try:
                 ind = Indicators.calculate_all(df)
                 rsi = ind['rsi'].iloc[-1]
             except:
                 rsi = 50.0
 
-            # Decide direction
             direction = None
             if change_5min > 0.8 and vol_ratio > 1.2 and rsi > 60:
                 direction = "BUY"
             elif change_5min < -0.8 and vol_ratio > 1.2 and rsi < 40:
                 direction = "SELL"
 
-            # v9.2: update shared sector-bias cache so _check_signal can read it
             if direction:
                 self.paper_engine._sector_bias_cache[sector] = {
                     'direction': direction,
                     'change_5min': round(change_5min, 3),
-                    'vol_ratio':   round(float(vol_ratio), 3),
-                    'rsi':         round(float(rsi), 1),
-                    'updated':     time.time(),
+                    'vol_ratio': round(float(vol_ratio), 3),
+                    'rsi': round(float(rsi), 1),
+                    'updated': time.time(),
                 }
                 logger.debug(
                     f"Sector bias [{sector}]: {direction}"
                     f"  Δ5m={change_5min:.2f}%  vol={vol_ratio:.2f}x  RSI={rsi:.1f}"
                 )
             else:
-                # Clear stale entry so stocks aren't penalised by an old signal
                 self.paper_engine._sector_bias_cache.pop(sector, None)
             return direction
 
@@ -3589,20 +3444,14 @@ class SectorMonitor:
             return None
 
     def _execute_sector_trade(self, sector, direction):
-        """
-        Pick the strongest stock in the sector and attempt to open a position.
-        """
         stocks = self.sector_map.get(sector, [])
         if not stocks:
             return
 
-        # Pick a stock that is not already in a position and has price > min.
-        # For simplicity, we pick the first eligible stock.
         best_stock = None
         for sym in stocks:
             if sym in self.paper_engine.data.get('positions', {}):
                 continue
-            # Check price quickly using batch LTP
             ltp = self.paper_engine._get_batch_ltp([sym]).get(sym)
             if ltp and ltp > 50:
                 best_stock = sym
@@ -3612,11 +3461,10 @@ class SectorMonitor:
             logger.info(f"Sector {sector} {direction} - no available stock to trade")
             return
 
-        # Get latest 5-min data for the stock
         token = SYMBOL_MAP[best_stock]['token']
         try:
             _hist_limiter.wait(f"sector_trade {best_stock}")
-            data = kite.historical_data(token, datetime.now() - timedelta(days=3), datetime.now(), "5minute")
+            data = self.paper_engine._kite.historical_data(token, datetime.now() - timedelta(days=3), datetime.now(), "5minute")
             if not data or len(data) < 80:
                 logger.warning(f"Sector trade: insufficient data for {best_stock}")
                 return
@@ -3645,23 +3493,23 @@ def detect_candle_patterns(df, i):
     buy_bonus = 0.0
     sell_bonus = 0.0
     try:
-        c  = float(df['close'].iloc[i])
-        o  = float(df['open'].iloc[i])
-        h  = float(df['high'].iloc[i])
-        l  = float(df['low'].iloc[i])
-        body   = abs(c - o)
-        rng    = (h - l) if (h - l) > 0 else 1e-9
+        c = float(df['close'].iloc[i])
+        o = float(df['open'].iloc[i])
+        h = float(df['high'].iloc[i])
+        l = float(df['low'].iloc[i])
+        body = abs(c - o)
+        rng = (h - l) if (h - l) > 0 else 1e-9
         body_r = body / rng
-        uw_r   = (h - max(c, o)) / rng
-        lw_r   = (min(c, o) - l) / rng
-        bull   = c > o
-        bear   = c < o
-        patterns['DOJI']         = body_r < 0.10
+        uw_r = (h - max(c, o)) / rng
+        lw_r = (min(c, o) - l) / rng
+        bull = c > o
+        bear = c < o
+        patterns['DOJI'] = body_r < 0.10
         patterns['SPINNING_TOP'] = 0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25
-        patterns['HAMMER']        = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
-        patterns['INVERTED_HAMMER']=(uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
+        patterns['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
+        patterns['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
         patterns['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
-        patterns['HANGING_MAN']   = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
+        patterns['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
         patterns['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
         patterns['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
         patterns['STRONG_BULL_BODY'] = (body_r > 0.65 and bull and uw_r < 0.20)
@@ -3679,7 +3527,7 @@ def detect_candle_patterns(df, i):
             prev_mid = (po + pc) / 2
             patterns['PIERCING_LINE'] = (pbear and bull and o < pl and c > prev_mid and c < po)
             patterns['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < prev_mid and c > pc)
-            patterns['TWEEZER_TOP']    = (pbull and bear and abs(h - ph) / rng < 0.05)
+            patterns['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
             patterns['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
         if i >= 2:
             c2 = float(df['close'].iloc[i-2])
@@ -3687,14 +3535,13 @@ def detect_candle_patterns(df, i):
             c1 = float(df['close'].iloc[i-1])
             o1 = float(df['open'].iloc[i-1])
             body1 = abs(c1 - o1)
-            rng1  = (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) if (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) > 0 else 1e-9
+            rng1 = (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) if (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) > 0 else 1e-9
             mid1_body = body1 / rng1
             bar2_mid = (o2 + c2) / 2
             patterns['MORNING_STAR'] = (c2 < o2 and mid1_body < 0.30 and bull and c > bar2_mid)
             patterns['EVENING_STAR'] = (c2 > o2 and mid1_body < 0.30 and bear and c < bar2_mid)
             patterns['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
             patterns['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
-        # Scoring
         for p in ['HAMMER','INVERTED_HAMMER','BULL_ENGULFING','PIERCING_LINE','MORNING_STAR','THREE_WHITE_SOLDIERS','TWEEZER_BOTTOM','BULL_MARUBOZU']:
             if patterns.get(p):
                 pts = {'BULL_ENGULFING':6,'MORNING_STAR':7,'THREE_WHITE_SOLDIERS':6,'BULL_MARUBOZU':5,'HAMMER':5,'PIERCING_LINE':4,'TWEEZER_BOTTOM':4,'INVERTED_HAMMER':3}
@@ -3704,21 +3551,360 @@ def detect_candle_patterns(df, i):
                 pts = {'BEAR_ENGULFING':6,'EVENING_STAR':7,'THREE_BLACK_CROWS':6,'BEAR_MARUBOZU':5,'SHOOTING_STAR':5,'DARK_CLOUD_COVER':4,'TWEEZER_TOP':4,'HANGING_MAN':3}
                 sell_bonus += pts.get(p, 3)
         if patterns.get('DOJI') or patterns.get('SPINNING_TOP'):
-            buy_bonus  -= 8.0
+            buy_bonus -= 8.0
             sell_bonus -= 8.0
     except Exception as e:
         logger.debug(f"Candle pattern error: {e}")
     return patterns, buy_bonus, sell_bonus
 
-# Initialize global instances
-paper_engine = PaperTradingEngine()
-paper_engine.start()
-full_scanner = FullScanner()
-sector_monitor = SectorMonitor(paper_engine)
-sector_monitor.start()
+# ==================== BACKTEST ENGINE ====================
+class BacktestEngine:
+    def __init__(self, strategies_dict):
+        self.strategies_dict = strategies_dict
+        self.results = None
 
-# ==================== FLASK WEB UI ====================
+    def run(self, kite, symbol_map, pinned_stocks, initial_wallet=100000, from_date=None, to_date=None):
+        if from_date and to_date:
+            start = datetime.fromisoformat(from_date)
+            end = datetime.fromisoformat(to_date)
+        else:
+            end = datetime.now()
+            start = end - timedelta(days=30)
+
+        trades = []
+        wallet = initial_wallet
+        positions = {}
+
+        for sym in pinned_stocks:
+            if sym not in symbol_map:
+                continue
+            token = symbol_map[sym]['token']
+            try:
+                _hist_limiter.wait(f"backtest {sym}")
+                data = kite.historical_data(token, start, end, "5minute")
+                if not data or len(data) < 20:
+                    continue
+                df = pd.DataFrame(data)
+                ind = Indicators.calculate_all(df)
+                for i in range(20, len(df)):
+                    df_slice = df.iloc[:i+1]
+                    ind_slice = ind.iloc[:i+1]
+                    if len(df_slice) < 60:
+                        continue
+                    current_bar = df_slice.iloc[-1]
+                    ltp = current_bar['close']
+                    if sym in positions:
+                        pos = positions[sym]
+                        if pos['side'] == 'BUY':
+                            if ltp >= pos['target']:
+                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET'))
+                                del positions[sym]
+                            elif ltp <= pos['stoploss']:
+                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS'))
+                                del positions[sym]
+                        else:
+                            if ltp <= pos['target']:
+                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET'))
+                                del positions[sym]
+                            elif ltp >= pos['stoploss']:
+                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS'))
+                                del positions[sym]
+                        continue
+
+                    df_w = df_slice.iloc[-60:].reset_index(drop=True)
+                    ind_w = ind_slice.iloc[-60:].reset_index(drop=True)
+                    b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
+                    if b > s and b > 20:
+                        price = ltp
+                        atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
+                        if atr and atr > 0:
+                            target, stoploss = self._calculate_atr_targets(price, atr, 'BUY')
+                        else:
+                            target = price * 1.01
+                            stoploss = price * 0.995
+                        qty = int((wallet * 0.7) / price)
+                        if qty > 0:
+                            positions[sym] = {
+                                'side': 'BUY',
+                                'entry_price': price,
+                                'qty': qty,
+                                'target': target,
+                                'stoploss': stoploss,
+                            }
+                            wallet -= price * qty * 0.2
+                    elif s > b and s > 20:
+                        price = ltp
+                        atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
+                        if atr and atr > 0:
+                            target, stoploss = self._calculate_atr_targets(price, atr, 'SELL')
+                        else:
+                            target = price * 0.99
+                            stoploss = price * 1.005
+                        qty = int((wallet * 0.7) / price)
+                        if qty > 0:
+                            positions[sym] = {
+                                'side': 'SELL',
+                                'entry_price': price,
+                                'qty': qty,
+                                'target': target,
+                                'stoploss': stoploss,
+                            }
+                            wallet -= price * qty * 0.2
+                for sym, pos in list(positions.items()):
+                    trades.append(self._close_trade(sym, pos, pos['entry_price'], 'END'))
+            except Exception as e:
+                logger.error(f"Backtest error on {sym}: {e}")
+
+        total_trades = len(trades)
+        if total_trades == 0:
+            return {'total_trades': 0, 'win_rate': 0, 'net_pnl': 0, 'trades': [], 'final_wallet': initial_wallet}
+        wins = sum(1 for t in trades if t['pnl'] > 0)
+        net_pnl = sum(t['pnl'] for t in trades)
+        win_rate = wins / total_trades * 100 if total_trades > 0 else 0
+        final_wallet = initial_wallet + net_pnl
+        return {
+            'total_trades': total_trades,
+            'win_trades': wins,
+            'loss_trades': total_trades - wins,
+            'win_rate': round(win_rate, 2),
+            'net_pnl': round(net_pnl, 2),
+            'final_wallet': round(final_wallet, 2),
+            'trades': trades[-50:],
+        }
+
+    def _close_trade(self, sym, pos, exit_price, reason):
+        if pos['side'] == 'BUY':
+            pnl = (exit_price - pos['entry_price']) * pos['qty']
+        else:
+            pnl = (pos['entry_price'] - exit_price) * pos['qty']
+        charges = abs(pnl) * 0.001
+        net_pnl = pnl - charges
+        return {
+            'symbol': sym,
+            'side': pos['side'],
+            'entry_price': pos['entry_price'],
+            'exit_price': exit_price,
+            'qty': pos['qty'],
+            'pnl': round(net_pnl, 2),
+            'exit_reason': reason
+        }
+
+    def _calculate_atr_targets(self, price, atr, side):
+        if side == 'BUY':
+            target = price + atr * 1.5
+            stoploss = price - atr * 1.0
+        else:
+            target = price - atr * 1.5
+            stoploss = price + atr * 1.0
+        return round(target, 2), round(stoploss, 2)
+
+# ==================== FLASK APP ====================
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+# ==================== FLASK ROUTES ====================
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    users = UserManager.load_users()
+    if request.method == 'POST':
+        user_id = request.form.get('user_id')
+        session['user_id'] = user_id
+        if UserManager.ensure_authenticated(user_id):
+            return redirect('/')
+        else:
+            return redirect(url_for('auth', user_id=user_id))
+    return render_template_string(LOGIN_HTML, users=users)
+
+@app.route('/auth/<user_id>')
+def auth(user_id):
+    user_data = UserManager.get_user_data(user_id)
+    if not user_data:
+        return "User not found", 404
+    
+    redirect_url = os.getenv("REDIRECT_URL", "http://localhost:5000/api/broker/callback")
+    kite = KiteConnect(api_key=user_data["kite_api_key"])
+    
+    session['redirect_url'] = redirect_url
+    config = Config(user_id)
+    if os.path.exists(config.TOKEN_FILE):
+        try:
+            with open(config.TOKEN_FILE, "r") as f:
+                access_token = f.read().strip()
+            kite.set_access_token(access_token)
+            _other_limiter.wait("profile")
+            kite.profile()
+            UserManager._kites[user_id] = kite
+            return redirect('/')
+        except Exception:
+            pass
+    
+    UserManager._kites[user_id] = kite
+    login_url = kite.login_url()
+    if 'redirect_url' not in login_url:
+        import urllib.parse
+        parsed = list(urllib.parse.urlparse(login_url))
+        query = dict(urllib.parse.parse_qsl(parsed[4]))
+        query['redirect_url'] = redirect_url
+        parsed[4] = urllib.parse.urlencode(query)
+        login_url = urllib.parse.urlunparse(parsed)
+    
+    session['pending_user'] = user_id
+    return redirect(login_url)
+
+@app.route('/api/broker/callback')
+def oauth_callback():
+    request_token = request.args.get('request_token')
+    if not request_token:
+        return "Missing request_token", 400
+    
+    user_id = session.get('pending_user')
+    if not user_id:
+        return "No user in session", 400
+    
+    user_data = UserManager.get_user_data(user_id)
+    if not user_data:
+        return "User not found", 404
+    
+    try:
+        kite = UserManager.get_kite(user_id)
+        _other_limiter.wait("generate_session")
+        data = kite.generate_session(request_token, api_secret=user_data["kite_api_secret"])
+        access_token = data["access_token"]
+        UserManager.set_access_token(user_id, access_token)
+        session.pop('pending_user', None)
+        get_instrument_cache(kite)
+        return redirect('/')
+    except Exception as e:
+        return f"Error exchanging token: {e}", 500
+
+@app.route('/api/user/update-keys', methods=['POST'])
+def update_user_keys():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+
+    data = request.json
+    api_key = data.get('kite_api_key')
+    api_secret = data.get('kite_api_secret')
+
+    if not api_key or not api_secret:
+        return jsonify({'status': 'error', 'msg': 'Both key and secret are required'}), 400
+
+    try:
+        with open("users.json", "r") as f:
+            users = json.load(f)
+    except FileNotFoundError:
+        return jsonify({'status': 'error', 'msg': 'users.json not found'}), 500
+
+    if user_id not in users:
+        return jsonify({'status': 'error', 'msg': 'User not found'}), 404
+
+    enc_key = encrypt_secret(api_key)
+    enc_secret = encrypt_secret(api_secret)
+
+    users[user_id]['kite_api_key'] = enc_key
+    users[user_id]['kite_api_secret'] = enc_secret
+
+    with open("users.json", "w") as f:
+        json.dump(users, f, indent=2)
+
+    UserManager.reload_users()
+
+    return jsonify({'status': 'ok', 'msg': 'API keys updated successfully'})
+
+@app.route('/api/user/update-strategy', methods=['POST'])
+def update_user_strategy():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+
+    data = request.json
+    strategy_name = data.get('strategy')
+    if not strategy_name or strategy_name not in AVAILABLE_STRATEGIES:
+        return jsonify({'status': 'error', 'msg': 'Invalid strategy'}), 400
+
+    try:
+        UserManager.set_user_strategy(user_id, strategy_name)
+        if user_id in UserManager._paper_engines:
+            UserManager._paper_engines[user_id].stop()
+            del UserManager._paper_engines[user_id]
+        return jsonify({'status': 'ok', 'msg': f'Strategy set to {strategy_name}'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
+@app.route('/api/backtest/run', methods=['POST'])
+def run_backtest():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+
+    data = request.json
+    wallet = data.get('wallet', 100000)
+    from_date = data.get('from_date')
+    to_date = data.get('to_date')
+
+    kite = UserManager.get_kite(user_id)
+    pe = UserManager.get_paper_engine(user_id)
+    strategy_name, strategies_dict = UserManager.get_user_strategy(user_id)
+
+    pinned = pe.data.get('pinned', [])
+    if not pinned:
+        return jsonify({'status': 'error', 'msg': 'No pinned stocks to backtest'}), 400
+
+    symbol_map = get_symbol_map()
+    backtest = BacktestEngine(strategies_dict)
+    results = backtest.run(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
+
+    return jsonify({'status': 'ok', 'results': results})
+
+# ─── HELPER FOR SYMBOL MAP ──────────────────────────────────
+def get_symbol_map():
+    global _instrument_cache
+    if _instrument_cache is None:
+        user_id = session.get('user_id')
+        if user_id:
+            kite = UserManager.get_kite(user_id)
+            get_instrument_cache(kite)
+        else:
+            return {}
+    return {s['symbol']: s for s in _instrument_cache}
+
+# ─── HELPER FOR USER ENGINES ──────────────────────────────
+def get_user_engines():
+    user_id = session.get('user_id')
+    if not user_id:
+        return None, None, None, None
+    if not UserManager.ensure_authenticated(user_id):
+        return None, None, None, None
+    kite = UserManager.get_kite(user_id)
+    pe = UserManager.get_paper_engine(user_id)
+    scanner = UserManager.get_scanner(user_id)
+    sector = UserManager.get_sector_monitor(user_id)
+    return user_id, kite, pe, scanner, sector
+
+# ─── MAIN INDEX ─────────────────────────────────────────────
+@app.route('/')
+def index():
+    user_id = session.get('user_id')
+    if not user_id:
+        return redirect('/login')
+    if not UserManager.ensure_authenticated(user_id):
+        return redirect(url_for('auth', user_id=user_id))
+    pe = UserManager.get_paper_engine(user_id)
+    symbol_map = get_symbol_map()
+    content = gen_paper_tab(pe)
+    # Pass only the list of strategy names (JSON serializable)
+    strategy_names = list(AVAILABLE_STRATEGIES.keys())
+    current_strategy = UserManager.get_user_strategy(user_id)[0]
+    return render_template_string(HTML,
+        content=content,
+        all_symbols=sorted(symbol_map.keys()),
+        pinned_count=len(pe.data.get('pinned', [])),
+        pinned_symbols=pe.data.get('pinned', []),
+        available_strategies=strategy_names,
+        current_strategy=current_strategy
+    )
 
 @app.template_filter('fmt')
 def fmt_f(v):
@@ -3727,33 +3913,27 @@ def fmt_f(v):
     except:
         return v
 
-@app.route('/')
-def index():
-    content = gen_paper_tab()
-    return render_template_string(HTML,
-        content=content,
-        all_symbols=sorted(SYMBOL_MAP.keys()),
-        pinned_count=len(paper_engine.data.get('pinned', [])),
-        pinned_symbols=paper_engine.data.get('pinned', []),
-    )
-
 @app.route('/paper/pin', methods=['POST'])
 def paper_pin():
     try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
         d = request.json
         sym = d.get('symbol', '').upper().strip()
         action = d.get('action', 'pin')
-        if not sym or sym not in SYMBOL_MAP:
+        symbol_map = get_symbol_map()
+        if not sym or sym not in symbol_map:
             return jsonify({'status': 'error', 'msg': 'Symbol not found'})
         if action == 'pin':
             direction = d.get('direction')
             recommendation = d.get('recommendation')
             score = d.get('score')
-            paper_engine.pin(sym, direction=direction, recommendation=recommendation, score=score)
+            pe.pin(sym, direction=direction, recommendation=recommendation, score=score)
             dir_label = f' [{direction}]' if direction else ''
             return jsonify({'status': 'ok', 'msg': sym + ' pinned' + dir_label})
         else:
-            paper_engine.unpin(sym)
+            pe.unpin(sym)
             return jsonify({'status': 'ok', 'msg': sym + ' unpinned'})
     except Exception as e:
         logger.error(f"Pin error: {e}")
@@ -3762,77 +3942,101 @@ def paper_pin():
 @app.route('/paper/wallet', methods=['POST'])
 def paper_wallet():
     try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
         d = request.json
         amount = d.get('amount', 0)
         amount = float(amount)
         if amount <= 0:
             return jsonify({'status': 'error', 'msg': 'Must be positive'})
-        with paper_engine._lock:
+        with pe._lock:
             used = sum(p.get('margin_used', p['entry_price'] * p['qty']) 
-                      for p in paper_engine.data['positions'].values())
+                      for p in pe.data['positions'].values())
             if amount < used:
                 return jsonify({'status': 'error', 'msg': f'Cannot set below used margin {used:.2f}'})
-        paper_engine.set_wallet(amount)
+        pe.set_wallet(amount)
         return jsonify({'status': 'ok', 'wallet': amount})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/summary')
 def paper_summary():
-    smry = paper_engine.summary()
-    smry['pinned_list'] = paper_engine.data.get('pinned', [])
-    return jsonify(smry)
+    try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        smry = pe.summary()
+        smry['pinned_list'] = pe.data.get('pinned', [])
+        return jsonify(smry)
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/margin-info')
 def paper_margin_info():
-    pinned = paper_engine.data.get("pinned", [])
-    result = {}
-    for sym in pinned:
-        try:
-            # Re-use batch LTP helper so we don't burn quote quota here
-            prices = paper_engine._get_batch_ltp([sym])
-            ltp    = prices.get(sym)
-            if not ltp:
-                pos = paper_engine.data["positions"].get(sym)
-                ltp = pos["entry_price"] if pos else 100.0
-            margin_per, margin_pct, source = paper_engine._get_actual_margin(sym, ltp)
-            result[sym] = {
-                "ltp":              round(ltp, 2),
-                "margin_per_share": round(margin_per, 2),
-                "margin_pct":       round(margin_pct * 100, 1),
-                "leverage":         round(1 / margin_pct, 2) if margin_pct > 0 else 5.0,
-                "source":           source,
-            }
-        except Exception as e:
-            result[sym] = {
-                "error":      str(e),
-                "margin_pct": 20.0,
-                "leverage":   5.0,
-                "source":     "error",
-            }
-    return jsonify({"margins": result, "count": len(result)})
+    try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        pinned = pe.data.get("pinned", [])
+        result = {}
+        for sym in pinned:
+            try:
+                prices = pe._get_batch_ltp([sym])
+                ltp = prices.get(sym)
+                if not ltp:
+                    pos = pe.data["positions"].get(sym)
+                    ltp = pos["entry_price"] if pos else 100.0
+                margin_per, margin_pct, source = pe._get_actual_margin(sym, ltp)
+                result[sym] = {
+                    "ltp": round(ltp, 2),
+                    "margin_per_share": round(margin_per, 2),
+                    "margin_pct": round(margin_pct * 100, 1),
+                    "leverage": round(1 / margin_pct, 2) if margin_pct > 0 else 5.0,
+                    "source": source,
+                }
+            except Exception as e:
+                result[sym] = {"error": str(e), "margin_pct": 20.0, "leverage": 5.0, "source": "error"}
+        return jsonify({"margins": result, "count": len(result)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/orders')
 def paper_orders():
-    return jsonify({'orders': paper_engine.data.get('orders', [])})
+    try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        return jsonify({'orders': pe.data.get('orders', [])})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/trades')
 def paper_trades():
-    return jsonify({'trades': paper_engine.data.get('trades', [])})
+    try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        return jsonify({'trades': pe.data.get('trades', [])})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/exit', methods=['POST'])
 def paper_exit():
     try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
         d = request.json
         sym = d.get('symbol', '').upper().strip()
         if not sym:
             return jsonify({'status': 'error', 'msg': 'No symbol'})
-        ltp = paper_engine._get_live_ltp(sym)
+        ltp = pe._get_live_ltp(sym)
         if ltp is None:
-            with paper_engine._lock:
-                if sym in paper_engine.data['positions']:
-                    ltp = paper_engine.data['positions'][sym]['entry_price']
-        result = paper_engine.force_exit(sym, 'MANUAL_EXIT')
+            with pe._lock:
+                if sym in pe.data['positions']:
+                    ltp = pe.data['positions'][sym]['entry_price']
+        result = pe.force_exit(sym, 'MANUAL_EXIT')
         if result:
             return jsonify({
                 'status': 'ok',
@@ -3850,54 +4054,71 @@ def paper_exit():
 
 @app.route('/paper/signal-logs')
 def paper_signal_logs():
-    date = request.args.get('date', '')
-    status = request.args.get('status', '')
-    logs = paper_engine.get_signal_logs(
-        date=date if date else None,
-        status=status if status else None,
-        limit=300
-    )
-    return jsonify({'logs': logs})
+    try:
+        _, _, pe, _, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        date = request.args.get('date', '')
+        status = request.args.get('status', '')
+        logs = pe.get_signal_logs(
+            date=date if date else None,
+            status=status if status else None,
+            limit=300
+        )
+        return jsonify({'logs': logs})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/paper/scan-pinnable')
 def paper_scan_pinnable():
-    results = paper_engine._scan_for_pinnable_stocks(max_results=100)
-    p = full_scanner.progress
-    return jsonify({
-        'stocks': results,
-        'count': len(results),
-        'total_scanned': p.get('done', 0),
-        'total_found': len(p.get('results', [])),
-        'min_score': p.get('scan_min_score', full_scanner.MIN_SCORE),
-        'last_scan': p.get('last_scan'),
-    })
+    try:
+        _, _, pe, scanner, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        results = pe._scan_for_pinnable_stocks(max_results=100)
+        p = scanner.progress
+        return jsonify({
+            'stocks': results,
+            'count': len(results),
+            'total_scanned': p.get('done', 0),
+            'total_found': len(p.get('results', [])),
+            'min_score': p.get('scan_min_score', scanner.MIN_SCORE),
+            'last_scan': p.get('last_scan'),
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/sector/status')
 def sector_status():
-    return jsonify({
-        'running': sector_monitor._running,
-        'last_signals': sector_monitor._last_signal_time,
-        'cooldown_seconds': sector_monitor._cooldown_seconds
-    })
+    try:
+        _, _, _, _, sector = get_user_engines()
+        if not sector:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        return jsonify({
+            'running': sector._running,
+            'last_signals': sector._last_signal_time,
+            'cooldown_seconds': sector._cooldown_seconds
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/trade-slots')
 def trade_slots_status():
-    """Return current time slot status so the UI can show it."""
-    now  = datetime.now()
+    now = datetime.now()
     mins = now.hour * 60 + now.minute
     return jsonify({
-        'current_time':  now.strftime('%H:%M:%S'),
-        'current_mins':  mins,
-        'in_slot':       _in_trade_slot(mins),
-        'slot_label':    _slot_label(mins),
+        'current_time': now.strftime('%H:%M:%S'),
+        'current_mins': mins,
+        'in_slot': _in_trade_slot(mins),
+        'slot_label': _slot_label(mins),
         'slots': [
-            {'name': 'SLOT-1', 'label': '9:15–10:15',  'quality': '⭐⭐⭐⭐⭐', 'type': 'Momentum/Breakout',
+            {'name': 'SLOT-1', 'label': '9:15–10:15', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Momentum/Breakout',
              'active': 9*60+15 <= mins <= 10*60+15},
             {'name': 'SLOT-2', 'label': '10:30–12:30', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Trend (BEST)',
              'active': 10*60+30 <= mins <= 12*60+30},
-            {'name': 'AVOID',  'label': '12:30–14:00', 'quality': '⭐⭐',      'type': 'Lunch Chop — SKIP',
+            {'name': 'AVOID', 'label': '12:30–14:00', 'quality': '⭐⭐', 'type': 'Lunch Chop — SKIP',
              'active': 12*60+30 < mins < 14*60+0},
-            {'name': 'SLOT-3', 'label': '14:00–15:30', 'quality': '⭐⭐⭐⭐',   'type': 'Breakout/Reversal',
+            {'name': 'SLOT-3', 'label': '14:00–15:30', 'quality': '⭐⭐⭐⭐', 'type': 'Breakout/Reversal',
              'active': 14*60+0 <= mins <= 15*60+30},
         ],
     })
@@ -3905,92 +4126,118 @@ def trade_slots_status():
 @app.route('/scanner/start', methods=['POST'])
 def scanner_start():
     try:
+        _, kite, pe, scanner, _ = get_user_engines()
+        if not pe or not kite:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
         d = request.json or {}
         mode = d.get('mode', 'all')
         max_stocks = d.get('max_stocks', None)
         min_score = d.get('min_score', None)
-        result = full_scanner.run_scan(mode=mode, max_stocks=max_stocks, min_score=min_score)
+        symbol_map = get_symbol_map()
+        result = scanner.run_scan(kite, pe, symbol_map, mode=mode, max_stocks=max_stocks, min_score=min_score)
         return jsonify(result)
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/scanner/stop', methods=['POST'])
 def scanner_stop():
-    full_scanner.stop_scan()
-    return jsonify({'status': 'stopped'})
+    try:
+        _, _, _, scanner, _ = get_user_engines()
+        if not scanner:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        scanner.stop_scan()
+        return jsonify({'status': 'stopped'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/scanner/status')
 def scanner_status():
-    p = full_scanner.progress
-    return jsonify({
-        'status': p['status'],
-        'done': p['done'],
-        'total': p['total'],
-        'current': p['current'],
-        'found': len(p['results']),
-        'errors': p['errors'],
-        'last_scan': p['last_scan'],
-        'elapsed': p['elapsed'],
-    })
+    try:
+        _, _, _, scanner, _ = get_user_engines()
+        if not scanner:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        p = scanner.progress
+        return jsonify({
+            'status': p['status'],
+            'done': p['done'],
+            'total': p['total'],
+            'current': p['current'],
+            'found': len(p['results']),
+            'errors': p['errors'],
+            'last_scan': p['last_scan'],
+            'elapsed': p['elapsed'],
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/scanner/results')
 def scanner_results():
-    limit = int(request.args.get('limit', 100))
-    min_score = request.args.get('min_score', None)
-    results = full_scanner.get_results(limit=limit, min_score=min_score)
-    return jsonify({'results': results, 'count': len(results)})
+    try:
+        _, _, _, scanner, _ = get_user_engines()
+        if not scanner:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        limit = int(request.args.get('limit', 100))
+        min_score = request.args.get('min_score', None)
+        results = scanner.get_results(limit=limit, min_score=min_score)
+        pe = UserManager.get_paper_engine(session.get('user_id'))
+        pinned = set(pe.data.get('pinned', []))
+        for r in results:
+            r['already_pinned'] = r['symbol'] in pinned
+        return jsonify({'results': results, 'count': len(results)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/market-indices')
 def market_indices():
-    indices = [
-        ('NSE:NIFTY 50', 'NIFTY', 'index'),
-        ('NSE:NIFTY BANK', 'BANKNIFTY', 'index'),
-        ('NSE:INDIA VIX', 'VIX', 'vix'),
-        ('BSE:SENSEX', 'SENSEX', 'index')
-    ]
-    out = []
-    for ts, label, kind in indices:
-        try:
-            _quote_limiter.wait(f"index {label}")   # was auth.rate_limiter.wait(...)
-            q = kite.ltp([ts])
-            ltp_val = float(q[ts]['last_price']) if q and ts in q else None
-        except:
-            ltp_val = None
-        if ltp_val is None:
+    try:
+        _, kite, _, _, _ = get_user_engines()
+        if not kite:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        indices = [
+            ('NSE:NIFTY 50', 'NIFTY', 'index'),
+            ('NSE:NIFTY BANK', 'BANKNIFTY', 'index'),
+            ('NSE:INDIA VIX', 'VIX', 'vix'),
+            ('BSE:SENSEX', 'SENSEX', 'index')
+        ]
+        out = []
+        for ts, label, kind in indices:
             try:
-                tm = {'NIFTY': 256265, 'BANKNIFTY': 260105, 'INDIA VIX': 264969}
-                sn = label if label != 'VIX' else 'INDIA VIX'
-                if sn in tm:
-                    _hist_limiter.wait(f"index hist {label}")   # add this too
-                    data = kite.historical_data(tm[sn], datetime.now() - timedelta(minutes=5), datetime.now(), 'minute')
-                    if data:
-                        ltp_val = float(data[-1]['close'])
+                _quote_limiter.wait(f"index {label}")
+                q = kite.ltp([ts])
+                ltp_val = float(q[ts]['last_price']) if q and ts in q else None
             except:
-                pass
-        out.append({'label': label, 'ltp': ltp_val, 'kind': kind})
-    return jsonify({'indices': out})
+                ltp_val = None
+            if ltp_val is None:
+                try:
+                    tm = {'NIFTY': 256265, 'BANKNIFTY': 260105, 'INDIA VIX': 264969}
+                    sn = label if label != 'VIX' else 'INDIA VIX'
+                    if sn in tm:
+                        _hist_limiter.wait(f"index hist {label}")
+                        data = kite.historical_data(tm[sn], datetime.now() - timedelta(minutes=5), datetime.now(), 'minute')
+                        if data:
+                            ltp_val = float(data[-1]['close'])
+                except:
+                    pass
+            out.append({'label': label, 'ltp': ltp_val, 'kind': kind})
+        return jsonify({'indices': out})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/market/movers')
 def market_movers():
-    """
-    Drop-in replacement for the /market/movers Flask route handler.
- 
-    Key changes vs original:
-      • OHLC batch uses _quote_limiter (1 req/sec)
-      • Per-stock historical_data uses _hist_limiter (3 req/sec)
-      • Removed the manual time.sleep() — the limiter handles pacing
-    """
     try:
-        candidates  = [SYMBOL_MAP[s] for s in PRIORITY_SYMBOLS[:150] if s in SYMBOL_MAP]
+        _, kite, _, _, _ = get_user_engines()
+        if not kite:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        candidates = [get_symbol_map().get(s) for s in PRIORITY_SYMBOLS[:150] if s in get_symbol_map()]
         gainers, losers, vol_gainers, momentum = [], [], [], []
-        now         = datetime.now()
-        start5      = now - timedelta(days=3)
-        ohlc_map    = {}
+        now = datetime.now()
+        start5 = now - timedelta(days=3)
+        ohlc_map = {}
  
-        # ── OHLC batch (counts as 1 Quote call per batch of 100) ──
         try:
             batch_size = 100
-            sym_list   = [s["symbol"] for s in candidates]
+            sym_list = [s["symbol"] for s in candidates]
             for i in range(0, len(sym_list), batch_size):
                 batch = [f"NSE:{s}" for s in sym_list[i : i + batch_size]]
                 _quote_limiter.wait("movers ohlc batch")
@@ -4001,129 +4248,102 @@ def market_movers():
         except Exception as e:
             logger.warning(f"OHLC batch fetch error: {e}")
  
-        # ── Per-stock historical (3 req/sec via _hist_limiter) ────
         for sym_info in candidates:
             try:
                 _hist_limiter.wait(f"movers hist {sym_info['symbol']}")
-                data = kite.historical_data(
-                    sym_info["token"], start5, now, "5minute"
-                )
+                data = kite.historical_data(sym_info["token"], start5, now, "5minute")
                 if not data or len(data) < 10:
                     continue
  
-                df  = pd.DataFrame(data)
+                df = pd.DataFrame(data)
                 ltp = float(df["close"].iloc[-1])
                 if ltp < 50:
                     continue
  
-                today_str     = now.strftime("%Y-%m-%d")
-                dt_series     = pd.to_datetime(df["date"])
+                today_str = now.strftime("%Y-%m-%d")
+                dt_series = pd.to_datetime(df["date"])
                 yesterday_bars = df[dt_series.dt.strftime("%Y-%m-%d") < today_str]
-                prev_close    = (
+                prev_close = (
                     float(yesterday_bars["close"].iloc[-1])
                     if len(yesterday_bars) > 0
                     else float(df["close"].iloc[0])
                 )
-                change_pct = (
-                    round((ltp - prev_close) / prev_close * 100, 2)
-                    if prev_close > 0 else 0
-                )
-                avg_vol   = (
-                    float(df["volume"].iloc[-20:].mean())
-                    if len(df) >= 20
-                    else float(df["volume"].mean())
-                )
-                cur_vol   = int(df["volume"].iloc[-1])
+                change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0
+                avg_vol = float(df["volume"].iloc[-20:].mean()) if len(df) >= 20 else float(df["volume"].mean())
+                cur_vol = int(df["volume"].iloc[-1])
                 vol_ratio = round(cur_vol / avg_vol, 2) if avg_vol > 0 else 0
  
-                sym  = sym_info["symbol"]
+                sym = sym_info["symbol"]
                 ohlc = ohlc_map.get(sym, {}).get("ohlc", {})
  
                 if ohlc and ohlc.get("high") and ohlc.get("low"):
                     today_high = float(ohlc["high"])
-                    today_low  = float(ohlc["low"])
+                    today_low = float(ohlc["low"])
                 else:
                     today_bars = df[dt_series.dt.strftime("%Y-%m-%d") == today_str]
                     if len(today_bars) > 0:
                         today_high = float(today_bars["high"].max())
-                        today_low  = float(today_bars["low"].min())
+                        today_low = float(today_bars["low"].min())
                     else:
                         today_high = round(ltp * 1.001, 2)
-                        today_low  = round(ltp * 0.999, 2)
+                        today_low = round(ltp * 0.999, 2)
  
-                day_range_pct = (
-                    round((today_high - today_low) / prev_close * 100, 2)
-                    if prev_close > 0 else 0
-                )
+                day_range_pct = round((today_high - today_low) / prev_close * 100, 2) if prev_close > 0 else 0
  
                 if ohlc_map.get(sym, {}).get("last_price"):
-                    ltp        = float(ohlc_map[sym]["last_price"])
-                    change_pct = (
-                        round((ltp - prev_close) / prev_close * 100, 2)
-                        if prev_close > 0 else change_pct
-                    )
+                    ltp = float(ohlc_map[sym]["last_price"])
+                    change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close > 0 else change_pct
  
                 try:
-                    d   = df["close"].diff()
-                    g   = d.where(d > 0, 0).ewm(com=13, adjust=False).mean()
+                    d = df["close"].diff()
+                    g = d.where(d > 0, 0).ewm(com=13, adjust=False).mean()
                     l_s = (-d.where(d < 0, 0)).ewm(com=13, adjust=False).mean()
-                    rsi = float(
-                        100 - 100 / (1 + g / l_s.clip(lower=1e-10)).iloc[-1]
-                    )
+                    rsi = float(100 - 100 / (1 + g / l_s.clip(lower=1e-10)).iloc[-1])
                 except Exception:
                     rsi = 50.0
  
                 item = {
-                    "symbol":        sym,
-                    "ltp":           round(ltp, 2),
-                    "prev_close":    round(prev_close, 2),
-                    "change":        change_pct,
-                    "vol_ratio":     vol_ratio,
-                    "cur_vol":       cur_vol,
-                    "avg_vol":       int(avg_vol),
-                    "today_high":    round(today_high, 2),
-                    "today_low":     round(today_low,  2),
+                    "symbol": sym,
+                    "ltp": round(ltp, 2),
+                    "prev_close": round(prev_close, 2),
+                    "change": change_pct,
+                    "vol_ratio": vol_ratio,
+                    "cur_vol": cur_vol,
+                    "avg_vol": int(avg_vol),
+                    "today_high": round(today_high, 2),
+                    "today_low": round(today_low, 2),
                     "day_range_pct": day_range_pct,
-                    "rsi":           round(rsi, 1),
+                    "rsi": round(rsi, 1),
                 }
  
-                if change_pct  >  0.3:   gainers.append(item)
-                elif change_pct < -0.3:  losers.append(item)
-                if vol_ratio   > 1.5:    vol_gainers.append(item)
-                if vol_ratio   > 1.3 and abs(change_pct) > 0.3:
+                if change_pct > 0.3: gainers.append(item)
+                elif change_pct < -0.3: losers.append(item)
+                if vol_ratio > 1.5: vol_gainers.append(item)
+                if vol_ratio > 1.3 and abs(change_pct) > 0.3:
                     momentum.append(item)
  
             except Exception as e:
                 logger.debug(f"Movers {sym_info['symbol']}: {e}")
                 continue
  
-        gainers.sort(    key=lambda x: -x["change"])
-        losers.sort(     key=lambda x:  x["change"])
+        gainers.sort(key=lambda x: -x["change"])
+        losers.sort(key=lambda x: x["change"])
         vol_gainers.sort(key=lambda x: -x["vol_ratio"])
-        momentum.sort(   key=lambda x: -(abs(x["change"]) * x["vol_ratio"]))
+        momentum.sort(key=lambda x: -(abs(x["change"]) * x["vol_ratio"]))
  
-        return jsonify(
-            {
-                "gainers":     gainers[:15],
-                "losers":      losers[:15],
-                "vol_gainers": vol_gainers[:15],
-                "momentum":    momentum[:15],
-                "as_of":       now.strftime("%H:%M:%S"),
-            }
-        )
- 
+        return jsonify({
+            "gainers": gainers[:15],
+            "losers": losers[:15],
+            "vol_gainers": vol_gainers[:15],
+            "momentum": momentum[:15],
+            "as_of": now.strftime("%H:%M:%S"),
+        })
     except Exception as e:
         logger.error(f"Movers error: {e}")
-        return jsonify(
-            {
-                "gainers": [], "losers": [],
-                "vol_gainers": [], "momentum": [],
-                "error": str(e),
-            }
-        )
+        return jsonify({"gainers": [], "losers": [], "vol_gainers": [], "momentum": [], "error": str(e)})
 
-def gen_paper_tab():
-    pe = paper_engine
+# ==================== UI HELPERS ====================
+def gen_paper_tab(pe):
     smry = pe.summary()
     wallet = smry['wallet']
     available = smry['available']
@@ -4157,7 +4377,7 @@ def gen_paper_tab():
         '<div class="pt-banner">'
         '<div style="font-size:20px;color:var(--gold);flex-shrink:0;padding-top:2px"><i class="fas fa-robot"></i></div>'
         '<div style="flex:1;min-width:0">'
-        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.2 — Dynamic Sizing · Sector Correlation · L2 Slippage · Dual-Conflict</div>'
+        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.7 — Fixed Backtest UI Persistence</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5">'
         '70% wallet · ATR risk sizing (1%/trade) · Target +0.8% · SL -0.5% · SqOff 15:15 · '
         'Slots: 9:15–10:15 ⭐⭐⭐⭐⭐ | 10:30–12:30 ⭐⭐⭐⭐⭐ | 14:00–15:30 ⭐⭐⭐⭐ · '
@@ -4181,6 +4401,8 @@ def gen_paper_tab():
         '<div class="tab2" data-tab="daily" onclick="ptSwitchTab(\'daily\')">Daily</div>'
         '<div class="tab2" data-tab="pinned" onclick="ptSwitchTab(\'pinned\')">📋 Monitored</div>'
         '<div class="tab2" data-tab="siglog" onclick="ptSwitchTab(\'siglog\')">📊 Signal Log</div>'
+        '<div class="tab2" data-tab="backtest" onclick="ptSwitchTab(\'backtest\')">📈 Backtest</div>'
+        '<div class="tab2" data-tab="settings" onclick="ptSwitchTab(\'settings\')">⚙️ Settings</div>'
         '</div>'
         '<div id="ptTabContent"><div class="es"><div class="spin"></div><p style="margin-top:10px">Loading...</p></div></div>'
     )
@@ -4310,7 +4532,6 @@ tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.018
 .es i{font-size:30px;margin-bottom:9px;opacity:.2}.es p{font-size:12px;text-align:center;padding:0 20px}
 .spin{width:18px;height:18px;border:2px solid var(--bg3);border-top-color:var(--blue);border-radius:50%;animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-/* Scanner progress bar */
 .scan-progress-bar{height:6px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;margin:8px 0}
 .scan-progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--blue),var(--gold));transition:width .4s}
 .scan-config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:10px}
@@ -4362,6 +4583,13 @@ tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.018
 <script>
 var PINNED_SYMS={{ pinned_symbols|tojson }};
 var ALL_SYMS={{ all_symbols|tojson }};
+var AVAILABLE_STRATEGIES = {{ available_strategies|tojson }};
+var CURRENT_STRATEGY = {{ current_strategy|tojson }};
+var _backtestWallet = 100000;
+var _backtestFromDate = '';
+var _backtestToDate = '';
+var _backtestRunning = false;
+var _backtestResults = null;
 var _lastOrderCount=-1;
 var _prevIndices={};
 var ptTab='overview', ptData={};
@@ -4372,11 +4600,9 @@ var _scanPollingTimer=null;
 const PT_REFRESH_INTERVAL=5000;
 const PT_BG_REFRESH_INTERVAL=30000;
 
-// ── CLOCK ──
 function tick(){var d=new Date();var el=document.getElementById('clk');if(el)el.textContent=d.toLocaleDateString('en-IN')+' '+d.toTimeString().slice(0,8);}
 setInterval(tick,1000);tick();
 
-// ── INDICES ──
 function fetchIndices(){
 fetch('/market-indices').then(r=>r.json()).then(d=>{
     if(!d.indices)return;
@@ -4395,14 +4621,12 @@ fetch('/market-indices').then(r=>r.json()).then(d=>{
 }
 fetchIndices();setInterval(fetchIndices,10000);
 
-// ── SIDEBAR ──
 function toggleSidebar(){var sb=document.getElementById('sidebar');var ov=document.getElementById('sidebarOverlay');var open=sb.classList.toggle('open');ov.classList.toggle('visible',open);document.body.style.overflow=open?'hidden':'';}
 function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('visible');document.body.style.overflow='';}
 function showToast(msg){var t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2500);}
 
 function isPinned(sym){return PINNED_SYMS.indexOf(sym)>=0;}
 
-// ── PAPER TRADING ──
 function initPT(){
 loadPTData();
 startPTRefresh(PT_REFRESH_INTERVAL);
@@ -4487,7 +4711,6 @@ fetch('/paper/summary').then(r=>r.json()).then(d=>{
     }
     _lastOrderCount=d.order_count||0;
     ptData=d;renderPTSummaryCards(d);renderPTTab(ptTab);
-    // siglog has its own polling via startSigLogPolling()
 }).catch(err=>console.error('[PT]',err));
 }
 
@@ -4532,9 +4755,231 @@ else if(tab==='trades')renderPTTrades(el);
 else if(tab==='daily')renderPTDaily(el);
 else if(tab==='pinned')renderPTPinned(el);
 else if(tab==='siglog')renderPTSigLog(el);
+else if(tab==='backtest')renderPTBacktest(el);
+else if(tab==='settings')renderPTSettings(el);
 }
 
-// ── OVERVIEW ──
+// ─── SETTINGS TAB ─────────────────────────────────────────
+function renderPTSettings(el){
+    el.innerHTML=`
+        <div style="padding:0;">
+            <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">⚙️ Settings</h2>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                    <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">📊 Strategy</h3>
+                    <select id="strategySelect" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
+                        ${AVAILABLE_STRATEGIES.map(name => `<option value="${name}" ${name===CURRENT_STRATEGY?'selected':''}>${name}</option>`).join('')}
+                    </select>
+                    <button class="btn btn-gold" onclick="saveStrategy()" style="width:100%;justify-content:center;padding:8px;"><i class="fas fa-save"></i> Save Strategy</button>
+                    <div id="strategyStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
+                </div>
+                <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                    <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">🔑 API Keys</h3>
+                    <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Kite API Key</label>
+                    <input type="text" id="settingsApiKey" placeholder="Enter your API key" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
+                    <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Kite API Secret</label>
+                    <input type="password" id="settingsApiSecret" placeholder="Enter your API secret" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
+                    <button class="btn btn-gold" onclick="saveApiKeys()" style="width:100%;justify-content:center;padding:8px;"><i class="fas fa-save"></i> Save API Keys</button>
+                    <div id="settingsStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
+                </div>
+            </div>
+            <div style="margin-top:16px;font-size:10px;color:var(--text3);text-align:center;border-top:1px solid var(--border);padding-top:12px;">
+                <i class="fas fa-shield-alt" style="margin-right:5px;"></i> Keys are encrypted using AES‑256 (Fernet) before storage.
+            </div>
+        </div>
+    `;
+}
+
+function saveStrategy(){
+var sel = document.getElementById('strategySelect');
+var strategy = sel.value;
+var status = document.getElementById('strategyStatus');
+status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Saving...</span>';
+fetch('/api/user/update-strategy', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({strategy: strategy})
+})
+.then(r=>r.json())
+.then(d=>{
+    if(d.status==='ok'){
+        status.innerHTML='<span style="color:var(--green);">✅ '+d.msg+'</span>';
+        showToast('✅ Strategy updated to '+strategy);
+        setTimeout(()=>location.reload(), 1000);
+    } else {
+        status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
+    }
+})
+.catch(e=>{
+    status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
+});
+}
+
+function saveApiKeys(){
+var key = document.getElementById('settingsApiKey').value.trim();
+var secret = document.getElementById('settingsApiSecret').value.trim();
+var status = document.getElementById('settingsStatus');
+if(!key || !secret){ status.innerHTML='<span style="color:var(--red);">Both fields are required.</span>'; return; }
+status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Saving...</span>';
+fetch('/api/user/update-keys', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({kite_api_key: key, kite_api_secret: secret})
+})
+.then(r=>r.json())
+.then(d=>{
+    if(d.status==='ok'){
+        status.innerHTML='<span style="color:var(--green);">✅ '+d.msg+'</span>';
+        showToast('✅ API keys updated successfully!');
+        document.getElementById('settingsApiKey').value='';
+        document.getElementById('settingsApiSecret').value='';
+    } else {
+        status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
+    }
+})
+.catch(e=>{
+    status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
+});
+}
+
+// ─── BACKTEST TAB ─────────────────────────────────────────
+function renderPTBacktest(el) {
+    var wallet = _backtestWallet || 100000;
+    var fromDate = _backtestFromDate || '';
+    var toDate = _backtestToDate || '';
+    var running = _backtestRunning;
+    var results = _backtestResults;
+    var statusMsg = running ? 'Running...' : (results ? 'Done' : '');
+    
+    var html = `
+        <div style="padding:0;">
+            <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">📈 Backtest</h2>
+            <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">Test your selected strategy on pinned stocks over a custom date range.</p>
+            <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end;">
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Initial Wallet (₹)</label>
+                        <input type="number" id="backtestWallet" value="${wallet}" step="10000" min="1000" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">From Date</label>
+                        <input type="date" id="backtestFromDate" value="${fromDate}" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">To Date</label>
+                        <input type="date" id="backtestToDate" value="${toDate}" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
+                </div>
+                <button class="btn btn-p" onclick="runBacktest()" id="backtestRunBtn" style="width:100%;justify-content:center;padding:10px;margin-top:12px;" ${running?'disabled':''}>
+                    <i class="fas fa-play"></i> ${running?'Running...':'Run Backtest'}
+                </button>
+                <div id="backtestStatus" style="margin-top:10px;font-size:12px;color:var(--text2);text-align:center;">
+                    ${running ? '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>' : ''}
+                    ${results && !running ? '<span style="color:var(--green);">✅ Backtest completed</span>' : ''}
+                </div>
+            </div>
+            <div id="backtestResults" style="display:${results ? 'block' : 'none'};background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px;">
+                <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">Results</h3>
+                <div id="backtestStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;"></div>
+                <div id="backtestTrades" style="overflow-x:auto;"></div>
+            </div>
+        </div>
+    `;
+    el.innerHTML = html;
+    
+    // If results exist, populate them
+    if (results) {
+        _displayBacktestResults(results);
+    }
+    
+    // Event listeners to remember values
+    var walletInput = document.getElementById('backtestWallet');
+    var fromInput = document.getElementById('backtestFromDate');
+    var toInput = document.getElementById('backtestToDate');
+    if (walletInput) {
+        walletInput.addEventListener('change', function() { _backtestWallet = parseFloat(this.value) || 100000; });
+        walletInput.addEventListener('input', function() { _backtestWallet = parseFloat(this.value) || 100000; });
+    }
+    if (fromInput) {
+        fromInput.addEventListener('change', function() { _backtestFromDate = this.value; });
+    }
+    if (toInput) {
+        toInput.addEventListener('change', function() { _backtestToDate = this.value; });
+    }
+}
+
+function _displayBacktestResults(res){
+    var statsDiv = document.getElementById('backtestStats');
+    var tradesDiv = document.getElementById('backtestTrades');
+    if (!statsDiv || !tradesDiv) return;
+    statsDiv.innerHTML=`
+        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Total Trades</span><br><span style="font-family:Space Mono;font-size:16px;">${res.total_trades}</span></div>
+        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Win Rate</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.win_rate>=50?'var(--green)':'var(--red)'};">${res.win_rate}%</span></div>
+        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Net P&L</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.net_pnl>=0?'var(--green)':'var(--red)'};">${res.net_pnl>=0?'+':''}₹${res.net_pnl.toFixed(2)}</span></div>
+        <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Final Wallet</span><br><span style="font-family:Space Mono;font-size:16px;color:var(--gold);">₹${res.final_wallet.toFixed(2)}</span></div>
+    `;
+    if(res.trades && res.trades.length){
+        var html='<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
+        res.trades.forEach(t=>{
+            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+        });
+        html+='</tbody></table>';
+        tradesDiv.innerHTML=html;
+    } else {
+        tradesDiv.innerHTML='<p style="color:var(--text3);font-size:12px;">No trades executed.</p>';
+    }
+    document.getElementById('backtestResults').style.display='block';
+}
+
+function runBacktest(){
+    var wallet = parseFloat(document.getElementById('backtestWallet').value) || 100000;
+    var fromDate = document.getElementById('backtestFromDate').value;
+    var toDate = document.getElementById('backtestToDate').value;
+    var status = document.getElementById('backtestStatus');
+    var runBtn = document.getElementById('backtestRunBtn');
+    if (!fromDate || !toDate) {
+        status.innerHTML='<span style="color:var(--orange);">Please select both From and To dates.</span>';
+        return;
+    }
+    if (fromDate > toDate) {
+        status.innerHTML='<span style="color:var(--red);">From date must be before To date.</span>';
+        return;
+    }
+    // Set running state
+    _backtestRunning = true;
+    _backtestResults = null;
+    if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
+    status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>';
+    document.getElementById('backtestResults').style.display='none';
+    
+    fetch('/api/backtest/run', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({wallet: wallet, from_date: fromDate, to_date: toDate})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        _backtestRunning = false;
+        if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
+        if(d.status==='error'){
+            status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
+            _backtestResults = null;
+            return;
+        }
+        var res = d.results;
+        _backtestResults = res;
+        status.innerHTML='<span style="color:var(--green);">✅ Backtest completed</span>';
+        _displayBacktestResults(res);
+    })
+    .catch(e=>{
+        _backtestRunning = false;
+        if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
+        status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
+        _backtestResults = null;
+    });
+}
+
+// ─── OVERVIEW ──────────────────────────────────────────────
 function renderPTOverview(el){
 var pos=ptData.positions||{};var syms=Object.keys(pos);
 var tp=ptData.target_pct||0.8,sl=ptData.sl_pct||0.5;
@@ -4570,7 +5015,6 @@ syms.forEach(sym=>{
 el.innerHTML=html;
 }
 
-// ── POSITIONS ──
 function renderPTPositions(el){
 var pos=ptData.positions||{};var syms=Object.keys(pos);
 if(!syms.length){el.innerHTML='<div class="es"><i class="fas fa-inbox"></i><p>No open positions</p></div>';return;}
@@ -4600,7 +5044,6 @@ syms.forEach(sym=>{
 html+='</tbody>\n</table>\n</div>';el.innerHTML=html;
 }
 
-// ── ORDERS ──
 function renderPTOrders(el){
 fetch('/paper/orders').then(r=>r.json()).then(d=>{
     var orders=(d.orders||[]).slice().reverse().slice(0,100);
@@ -4620,7 +5063,6 @@ fetch('/paper/orders').then(r=>r.json()).then(d=>{
 });
 }
 
-// ── TRADES ──
 function renderPTTrades(el){
 fetch('/paper/trades').then(r=>r.json()).then(d=>{
     var trades=(d.trades||[]).slice().reverse();
@@ -4656,7 +5098,6 @@ fetch('/paper/trades').then(r=>r.json()).then(d=>{
 });
 }
 
-// ── DAILY ──
 function renderPTDaily(el){
 var daily=ptData.daily_pnl||{};var dates=Object.keys(daily).sort().reverse();
 if(!dates.length){el.innerHTML='<div class="es"><i class="fas fa-calendar"></i><p>No daily data</p></div>';return;}
@@ -4681,7 +5122,6 @@ dates.forEach(dt=>{
 html+='</tbody>\n</table>\n</div>';el.innerHTML=html;
 }
 
-// ── PINNED / WATCHLIST ──
 function initWishlistSearch(){
 var inp=document.getElementById('wishlistSearch');if(!inp)return;
 inp.addEventListener('input',function(){
@@ -4707,8 +5147,6 @@ if(!isPinned(sym)){
 
 function renderPTPinned(el){
 var pinned=ptData.pinned_list||[];
-
-// If the scanner panel already exists, never rebuild innerHTML
 var existingPanel=document.getElementById('fullScanPanel');
 if(existingPanel){
     var countEl=document.getElementById('pinnedCountStat');
@@ -4722,8 +5160,6 @@ if(existingPanel){
     }
     return;
 }
-
-// First render: build full HTML
 var searchHtml='<div class="wishlist-search"><div class="wishlist-search-title">🔍 Add to Monitored List</div>'
     +'<div style="position:relative;"><div class="wishlist-search-input">'
     +'<i class="fas fa-magnifying-glass wishlist-search-icon"></i>'
@@ -4733,8 +5169,6 @@ var searchHtml='<div class="wishlist-search"><div class="wishlist-search-title">
     +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">'
     +'<span style="font-size:10px;color:var(--text3);font-family:Space Mono,monospace">Monitored: <span style="color:var(--gold)" id="pinnedCountStat">'+pinned.length+'</span></span>'
     +'</div></div>';
-
-// Full Scanner Panel with Movers
 var scanSection='<div style="background:var(--bg1);border:1px solid rgba(88,166,255,.25);border-radius:9px;padding:14px;margin-bottom:12px" id="fullScanPanel">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">'
     +'<div><div style="font-family:Space Mono,monospace;font-size:12px;font-weight:700;color:var(--blue)">🔎 Full Market Scanner</div>'
@@ -4774,7 +5208,6 @@ initWishlistSearch();_pinnableSuggestionsLoaded=false;
 pollScanStatus();
 }
 
-// FULL SCANNER CONTROLS
 function startFullScan(){
 var modeEl=document.getElementById('scanMode');
 var mode=modeEl?modeEl.options[modeEl.selectedIndex].value:'all';
@@ -5212,7 +5645,6 @@ var e1=document.getElementById('sidebarPinCount'),e2=document.getElementById('to
 if(e1)e1.textContent=PINNED_SYMS.length;if(e2)e2.textContent=PINNED_SYMS.length;
 }
 
-// SIGNAL LOG
 function renderPTSigLog(el){
 var first=!el.querySelector('#sigLogContainer');
 if(first){el.innerHTML='<div class="es"><div class="spin"></div><p style="margin-top:10px">Loading...</p></div>';_sigLogPage=1;}
@@ -5235,7 +5667,6 @@ fetch('/paper/signal-logs?date='+today).then(r=>r.json()).then(d=>{
     if(reset)_sigLogPage=1;
     var alive=document.getElementById('ptTabContent');
     if(alive&&(reset||changed)){
-        // Preserve mobile scroll position — only re-render if data changed
         var tw=alive.querySelector('.tw');
         var sx=tw?tw.scrollLeft:0,sy=tw?tw.scrollTop:0;
         _renderSigLogPage(alive);
@@ -5430,7 +5861,6 @@ _sigLogPage=page;
 var el=document.getElementById('ptTabContent');if(el)_renderSigLogPage(el);
 }
 
-// ACTIONS
 function forceExit(sym){
 if(!confirm('Force exit '+sym+' at market?'))return;
 var btn=event.target;var orig=btn.innerHTML;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i>';btn.disabled=true;
@@ -5459,53 +5889,46 @@ else{if(ptRefreshTimer){clearInterval(ptRefreshTimer);ptRefreshTimer=setInterval
 </body>
 </html>"""
 
+# ==================== LOGIN TEMPLATE ====================
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html>
+<head><title>Login</title></head>
+<body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
+<div style="background:#161b22;padding:30px;border-radius:12px;border:1px solid #30363d;width:300px;">
+<h2 style="color:#f0c040;">Alpha Scanner</h2>
+<form method="post">
+<label style="display:block;margin-bottom:8px;">Select User</label>
+<select name="user_id" style="width:100%;padding:8px;background:#21262d;color:white;border:1px solid #30363d;border-radius:6px;">
+{% for id, data in users.items() %}
+<option value="{{ id }}">{{ data.name }}</option>
+{% endfor %}
+</select>
+<button type="submit" style="margin-top:12px;width:100%;padding:8px;background:#1f6feb;border:none;border-radius:6px;color:white;font-weight:bold;cursor:pointer;">Login</button>
+</form>
+</div>
+</body>
+</html>
+"""
+
+# ==================== GLOBALS ====================
+SYMBOL_MAP = {}
+
 # ==================== MAIN ====================
 def main():
+    UserManager.load_users()
     print("\n" + "=" * 65)
-    print("  ALPHA SCANNER PRO  v9.1  — Noise Control + Counter-Trend Guard")
+    print("  ALPHA SCANNER PRO  v9.7  — Fixed Backtest UI Persistence")
     print("=" * 65)
-    print(f"  Stocks : {len(ALL_STOCKS)}")
-    print(f"  Web UI : http://localhost:5000")
-    print(f"  Scanner: Run MANUALLY from the UI — see timing guide below")
-    print(f"  Sectors: {len(SECTOR_MAP)} sectors monitored every 60 sec")
+    print("  Visit http://<your-vps-ip>:5000 to login")
+    print("  Redirect URL must be set to https://rahulintratrading.online/api/broker/callback")
     print("=" * 65)
-    print("\n✓ TIME SLOTS: Trades ONLY in 9:15–10:15, 10:30–12:30, 14:00–15:30")
-    print("✓ THRESHOLDS (v9.1 vs v9.0):")
-    print("    MIN_SIGNAL_SCORE  28 → 35  (noise filter restored)")
-    print("    MIN_VOTE_PCT      48 → 50% (clean majority threshold)")
-    print("    MIN_SOFT_LAYERS   2  (unchanged)")
-    print("    MIN_VOL_SURGE     1.3× (unchanged)")
-    print("✓ DUAL CONFLICT PROTECTION (NEW in v9.1):")
-    print("    Single conflict (ST only OR 15m only) → threshold 35")
-    print("    Dual conflict   (ST AND 15m both oppose) → threshold 42")
-    print("    NOT a hard block — high-quality signals still pass at 42+")
-    print("✓ SUPERTREND: ADVISORY (+8 aligned, -4 conflicting)")
-    print("✓ HTF-15m:    ADVISORY (-10 on conflict, not a hard block)")
-    print("✓ HTF_BULL band: BUY ≥0.45, SELL ≤0.55")
-    print("✓ VOL_PROFILE_POC: +wick confirmation ≥30% bar range (strategies v4.1)")
-    print("    Wider 0.5% proximity zone now requires genuine bounce/rejection candle")
-    print("✓ Expected daily signals: 3–6 (v9.0 was 4–8, filtered down for quality)")
+    print("  🧠 Available strategies: " + ", ".join(AVAILABLE_STRATEGIES.keys()))
+    print("  📈 Backtest UI now persists across refreshes.")
+    print("  📊 Signal logs auto‑delete after 5000 entries.")
     print("=" * 65)
-    print("\n✓ NEW in v9.2:")
-    print("    DYNAMIC SIZING    : qty = min(margin_cap, wallet×1% / (ATR×1.5))")
-    print("    SECTOR CORRELATION: ±6 pts when sector aligns / opposes entry")
-    print("    L2 SLIPPAGE       : fill uses best ask/bid from order book depth")
-    print("=" * 65)
-    
-    t = threading.Thread(target=lambda: app.run(debug=False, host='0.0.0.0', port=5000, threaded=True))
-    t.daemon = True
-    t.start()
-    
-    webbrowser.open('http://localhost:5000')
-    
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n  Shutting down...")
-        paper_engine.stop()
-        sector_monitor.stop()
-        print("  Goodbye!")
+    app.secret_key = os.urandom(24)
+    app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
 
 if __name__ == "__main__":
     main()
