@@ -1,5 +1,5 @@
 {
-  "wallet": 8858.46,
+  "wallet": 3572.91,
   "pinned": [
     "NTPC",
     "GREENPANEL",
@@ -76,7 +76,28 @@
       "score": 93.9
     }
   },
-  "positions": {},
+  "positions": {
+    "NTPC": {
+      "side": "BUY",
+      "qty": 94,
+      "entry_price": 358.85,
+      "margin_used": 6744.5,
+      "full_value": 33722.5,
+      "entry_time": "2026-07-03T11:53:44.432156",
+      "entry_date": "2026-07-03",
+      "signal_score": 80.0,
+      "strategy": "BUY_SETUP",
+      "target": 360.54,
+      "stoploss": 357.67,
+      "entry_atr": 0.7250000000000105,
+      "trail_activated": false,
+      "peak_price": 358.75,
+      "margin_pct": 0.2,
+      "leverage": 5.0,
+      "margin_source": "kite_api",
+      "entry_slip_pct": 0.1
+    }
+  },
   "orders": [
     {
       "order_id": "PT101853561993",
@@ -210,25 +231,6 @@
       "stt": 8.43,
       "total_charges": 35.75,
       "is_intraday": true
-    },
-    {
-      "order_id": "PT173012766297",
-      "symbol": "NTPC",
-      "side": "SELL",
-      "qty": 94,
-      "price": 343.7,
-      "margin_used": 6744.5,
-      "value": 32307.8,
-      "time": "2026-07-09T17:30:12.766297",
-      "date": "2026-07-09",
-      "reason": "INTRADAY_SQ_OFF",
-      "signal_score": 80.0,
-      "strategy": "BUY_SETUP",
-      "status": "EXECUTED",
-      "brokerage": 19.81,
-      "stt": 8.08,
-      "total_charges": 34.85,
-      "is_intraday": true
     }
   ],
   "trades": [
@@ -300,29 +302,6 @@
       "gst": 4.25,
       "stamp_duty": 1.08,
       "total_charges": 37.97
-    },
-    {
-      "symbol": "NTPC",
-      "side": "BUY",
-      "qty": 94,
-      "entry_price": 358.85,
-      "exit_price": 343.7,
-      "margin_used": 6744.5,
-      "full_value": 33731.9,
-      "entry_time": "2026-07-03T11:53:44.432156",
-      "exit_time": "2026-07-09T17:30:12.766297",
-      "date": "2026-07-09",
-      "gross_pnl": -1424.1,
-      "pnl": -1458.95,
-      "pnl_pct": -4.33,
-      "exit_reason": "INTRADAY_SQ_OFF",
-      "strategy": "BUY_SETUP",
-      "brokerage": 19.81,
-      "stt": 8.08,
-      "exchange_charge": 1.96,
-      "gst": 3.92,
-      "stamp_duty": 1.01,
-      "total_charges": 34.85
     }
   ],
   "daily_pnl": {
@@ -352,15 +331,6 @@
       "wins": 0,
       "losses": 1,
       "peak_wallet": 3335.9
-    },
-    "2026-07-09": {
-      "realized": -1458.95,
-      "gross_realized": -1424.1,
-      "total_charges": 34.85,
-      "trades": 1,
-      "wins": 0,
-      "losses": 1,
-      "peak_wallet": 3572.91
     }
   },
   "signal_logs": [
@@ -3371,13 +3341,6 @@
       "wins": 0,
       "losses": 1,
       "total_pnl": -193.45,
-      "total_trades": 1,
-      "win_rate": 0.0
-    },
-    "BUY_SETUP": {
-      "wins": 0,
-      "losses": 1,
-      "total_pnl": -1458.95,
       "total_trades": 1,
       "win_rate": 0.0
     }
