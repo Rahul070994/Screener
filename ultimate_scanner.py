@@ -407,6 +407,20 @@ class UserManager:
         return default, AVAILABLE_STRATEGIES.get(default, {})
 
     @classmethod
+    def get_user_mode(cls, user_id):
+        cfg = cls.get_user_config(user_id)
+        mode = cfg.get('trading_mode', 'INTRADAY')
+        return mode if mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
+
+    @classmethod
+    def set_user_mode(cls, user_id, mode):
+        if mode not in ('INTRADAY', 'DELIVERY'):
+            raise ValueError(f"Invalid mode {mode}")
+        cfg = cls.get_user_config(user_id)
+        cfg['trading_mode'] = mode
+        cls.save_user_config(user_id, cfg)
+
+    @classmethod
     def set_user_strategy(cls, user_id, strategy_name):
         if strategy_name not in AVAILABLE_STRATEGIES:
             raise ValueError(f"Strategy {strategy_name} not found")
@@ -419,8 +433,9 @@ class UserManager:
         if user_id not in cls._paper_engines:
             config = Config(user_id)
             strategy_name, strategies_dict = cls.get_user_strategy(user_id)
+            trading_mode = cls.get_user_mode(user_id)
             scanner = cls.get_scanner(user_id)
-            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner)
+            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner, trading_mode=trading_mode)
             cls._paper_engines[user_id] = pe
             pe.start(cls.get_kite(user_id))
         return cls._paper_engines[user_id]
@@ -1472,10 +1487,11 @@ class PaperTradingEngine:
     SECTOR_BIAS_SCORE = 6.0
     SECTOR_BIAS_TTL = 300
     
-    def __init__(self, config, strategies_dict, scanner=None):
+    def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY'):
         self.config = config
         self.strategies_dict = strategies_dict
         self.scanner = scanner
+        self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.PAPER_FILE = config.PAPER_FILE
         self.PAPER_BACKUP_DIR = config.PAPER_BACKUP_DIR
         os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
@@ -1496,7 +1512,7 @@ class PaperTradingEngine:
         self._margin_cache_ttl = 300
         self._fast_exit_thread = None
         self._sector_bias_cache = {}
-        logger.info("PaperTradingEngine initialized")
+        logger.info(f"PaperTradingEngine initialized [mode={self.trading_mode}]")
 
     def _fast_exit_loop(self):
         logger.info("Fast exit loop started")
@@ -1873,18 +1889,27 @@ class PaperTradingEngine:
     
     def _get_actual_margin(self, symbol, price, side="BUY"):
         now = time.time()
-        key = f"{symbol}_{side}"
+        key = f"{symbol}_{side}_{self.trading_mode}"
         if (
             key in self._margin_cache
             and (now - self._margin_cache_time.get(key, 0)) < self._margin_cache_ttl
         ):
             cached = self._margin_cache[key]
             logger.debug(
-                f"Margin cache hit {symbol} {side}: "
-                f"{cached[0]:.2f}/share ({cached[1]*100:.1f}%)"
+                f"Margin cache hit {symbol} {side} [{self.trading_mode}]: "
+                f"{cached[0]:.2f}/hare ({cached[1]*100:.1f}%)"
             )
             return cached
- 
+
+        if self.trading_mode == 'DELIVERY':
+            # Delivery (CNC) uses full cash per share — no leverage.
+            margin_per_share = round(price, 4)
+            margin_pct = 1.0
+            self._margin_cache[key] = (margin_per_share, margin_pct, "delivery_cash")
+            self._margin_cache_time[key] = now
+            logger.info(f"Margin {symbol} {side} [DELIVERY]: full cash {margin_per_share:.2f}/share (1x)")
+            return margin_per_share, margin_pct, "delivery_cash"
+
         try:
             _other_limiter.wait(f"margin {symbol}")
             result = self._kite.order_margins(
@@ -1908,7 +1933,7 @@ class PaperTradingEngine:
                     margin_per_share = round(price * margin_pct, 4)
                     leverage = round(result[0].get("leverage", 1 / margin_pct), 2)
                     logger.info(
-                        f"Margin {symbol} {side}: {margin_per_share:.2f}/share "
+                        f"Margin {symbol} {side} [INTRADAY]: {margin_per_share:.2f}/share "
                         f"({margin_pct*100:.1f}% = {leverage}x) — Kite API"
                     )
                     self._margin_cache[key] = (margin_per_share, margin_pct, "kite_api")
@@ -1916,14 +1941,14 @@ class PaperTradingEngine:
                     return margin_per_share, margin_pct, "kite_api"
         except Exception as e:
             logger.error(f"Margin API error {symbol}: {e}")
- 
+
         margin_pct = self.INTRADAY_MARGIN_PCT
         margin_per_share = round(price * margin_pct, 4)
         self._margin_cache[key] = (margin_per_share, margin_pct, "fallback")
         self._margin_cache_time[key] = now
         logger.info(
-            f"Margin {symbol} {side}: fallback "
-            f"{margin_pct*100:.0f}% = {margin_per_share:.2f}/share"
+            f"Margin {symbol} {side} [INTRADAY]: fallback "
+            f"{margin_pct*100:.0f}% = {margin_per_share:.2f}/hare"
         )
         return margin_per_share, margin_pct, "fallback"
     
@@ -3098,7 +3123,8 @@ class PaperTradingEngine:
                 is_wday = now.weekday() < 5
                 self._last_heartbeat = now
 
-                if is_wday and mins >= self.SQUARE_OFF_TIME and squaredoff_today != today:
+                if (is_wday and mins >= self.SQUARE_OFF_TIME and squaredoff_today != today
+                        and self.trading_mode == 'INTRADAY'):
                     if self.data["positions"]:
                         self._squareoff_all()
                     squaredoff_today = today
@@ -3559,8 +3585,9 @@ def detect_candle_patterns(df, i):
 
 # ==================== BACKTEST ENGINE ====================
 class BacktestEngine:
-    def __init__(self, strategies_dict):
+    def __init__(self, strategies_dict, trading_mode='INTRADAY'):
         self.strategies_dict = strategies_dict
+        self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.results = None
 
     def run(self, kite, symbol_map, pinned_stocks, initial_wallet=100000, from_date=None, to_date=None):
@@ -3570,6 +3597,8 @@ class BacktestEngine:
         else:
             end = datetime.now()
             start = end - timedelta(days=30)
+
+        margin_pct = 1.0 if self.trading_mode == 'DELIVERY' else 0.2
 
         trades = []
         wallet = initial_wallet
@@ -3593,21 +3622,22 @@ class BacktestEngine:
                         continue
                     current_bar = df_slice.iloc[-1]
                     ltp = current_bar['close']
+                    bar_time = current_bar['date'] if 'date' in current_bar else current_bar.get('date', datetime.now())
                     if sym in positions:
                         pos = positions[sym]
                         if pos['side'] == 'BUY':
                             if ltp >= pos['target']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET'))
+                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET', bar_time))
                                 del positions[sym]
                             elif ltp <= pos['stoploss']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS'))
+                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS', bar_time))
                                 del positions[sym]
                         else:
                             if ltp <= pos['target']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET'))
+                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET', bar_time))
                                 del positions[sym]
                             elif ltp >= pos['stoploss']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS'))
+                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS', bar_time))
                                 del positions[sym]
                         continue
 
@@ -3622,7 +3652,8 @@ class BacktestEngine:
                         else:
                             target = price * 1.01
                             stoploss = price * 0.995
-                        qty = int((wallet * 0.7) / price)
+                        margin_per_share = price * margin_pct
+                        qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
                         if qty > 0:
                             positions[sym] = {
                                 'side': 'BUY',
@@ -3630,8 +3661,9 @@ class BacktestEngine:
                                 'qty': qty,
                                 'target': target,
                                 'stoploss': stoploss,
+                                'entry_time': bar_time,
                             }
-                            wallet -= price * qty * 0.2
+                            wallet -= price * qty * margin_pct
                     elif s > b and s > 20:
                         price = ltp
                         atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
@@ -3640,7 +3672,8 @@ class BacktestEngine:
                         else:
                             target = price * 0.99
                             stoploss = price * 1.005
-                        qty = int((wallet * 0.7) / price)
+                        margin_per_share = price * margin_pct
+                        qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
                         if qty > 0:
                             positions[sym] = {
                                 'side': 'SELL',
@@ -3648,16 +3681,20 @@ class BacktestEngine:
                                 'qty': qty,
                                 'target': target,
                                 'stoploss': stoploss,
+                                'entry_time': bar_time,
                             }
-                            wallet -= price * qty * 0.2
+                            wallet -= price * qty * margin_pct
                 for sym, pos in list(positions.items()):
-                    trades.append(self._close_trade(sym, pos, pos['entry_price'], 'END'))
+                    trades.append(self._close_trade(sym, pos, pos['entry_price'], 'END', pos.get('entry_time')))
             except Exception as e:
                 logger.error(f"Backtest error on {sym}: {e}")
 
         total_trades = len(trades)
         if total_trades == 0:
-            return {'total_trades': 0, 'win_rate': 0, 'net_pnl': 0, 'trades': [], 'final_wallet': initial_wallet}
+            return {
+                'total_trades': 0, 'win_rate': 0, 'net_pnl': 0, 'trades': [],
+                'final_wallet': initial_wallet, 'mode': self.trading_mode,
+            }
         wins = sum(1 for t in trades if t['pnl'] > 0)
         net_pnl = sum(t['pnl'] for t in trades)
         win_rate = wins / total_trades * 100 if total_trades > 0 else 0
@@ -3670,15 +3707,29 @@ class BacktestEngine:
             'net_pnl': round(net_pnl, 2),
             'final_wallet': round(final_wallet, 2),
             'trades': trades[-50:],
+            'mode': self.trading_mode,
         }
 
-    def _close_trade(self, sym, pos, exit_price, reason):
+    def _close_trade(self, sym, pos, exit_price, reason, exit_time=None):
         if pos['side'] == 'BUY':
             pnl = (exit_price - pos['entry_price']) * pos['qty']
         else:
             pnl = (pos['entry_price'] - exit_price) * pos['qty']
         charges = abs(pnl) * 0.001
         net_pnl = pnl - charges
+        entry_time = pos.get('entry_time')
+
+        def _fmt(t):
+            if t is None:
+                return None
+            if isinstance(t, str):
+                return t
+            try:
+                return t.isoformat()
+            except Exception:
+                return str(t)
+
+        entry_iso = _fmt(entry_time)
         return {
             'symbol': sym,
             'side': pos['side'],
@@ -3686,7 +3737,10 @@ class BacktestEngine:
             'exit_price': exit_price,
             'qty': pos['qty'],
             'pnl': round(net_pnl, 2),
-            'exit_reason': reason
+            'exit_reason': reason,
+            'entry_time': entry_iso,
+            'exit_time': _fmt(exit_time),
+            'date': entry_iso[:10] if entry_iso else '',
         }
 
     def _calculate_atr_targets(self, price, atr, side):
@@ -3827,6 +3881,26 @@ def update_user_keys():
 
     return jsonify({'status': 'ok', 'msg': 'API keys updated successfully'})
 
+@app.route('/api/user/update-mode', methods=['POST'])
+def update_user_mode():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+
+    data = request.json
+    mode = data.get('mode')
+    if mode not in ('INTRADAY', 'DELIVERY'):
+        return jsonify({'status': 'error', 'msg': 'Invalid mode'}), 400
+
+    try:
+        UserManager.set_user_mode(user_id, mode)
+        if user_id in UserManager._paper_engines:
+            UserManager._paper_engines[user_id].stop()
+            del UserManager._paper_engines[user_id]
+        return jsonify({'status': 'ok', 'msg': f'Trading mode set to {mode}'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
 @app.route('/api/user/update-strategy', methods=['POST'])
 def update_user_strategy():
     user_id = session.get('user_id')
@@ -3857,6 +3931,9 @@ def run_backtest():
     wallet = data.get('wallet', 100000)
     from_date = data.get('from_date')
     to_date = data.get('to_date')
+    mode = data.get('mode') or UserManager.get_user_mode(user_id)
+    if mode not in ('INTRADAY', 'DELIVERY'):
+        mode = 'INTRADAY'
 
     kite = UserManager.get_kite(user_id)
     pe = UserManager.get_paper_engine(user_id)
@@ -3867,7 +3944,7 @@ def run_backtest():
         return jsonify({'status': 'error', 'msg': 'No pinned stocks to backtest'}), 400
 
     symbol_map = get_symbol_map()
-    backtest = BacktestEngine(strategies_dict)
+    backtest = BacktestEngine(strategies_dict, trading_mode=mode)
     results = backtest.run(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
 
     return jsonify({'status': 'ok', 'results': results})
@@ -3911,13 +3988,15 @@ def index():
     # Pass only the list of strategy names (JSON serializable)
     strategy_names = list(AVAILABLE_STRATEGIES.keys())
     current_strategy = UserManager.get_user_strategy(user_id)[0]
+    current_mode = UserManager.get_user_mode(user_id)
     return render_template_string(HTML,
         content=content,
         all_symbols=sorted(symbol_map.keys()),
         pinned_count=len(pe.data.get('pinned', [])),
         pinned_symbols=pe.data.get('pinned', []),
         available_strategies=strategy_names,
-        current_strategy=current_strategy
+        current_strategy=current_strategy,
+        current_mode=current_mode
     )
 
 @app.template_filter('fmt')
@@ -4621,9 +4700,11 @@ var PINNED_SYMS={{ pinned_symbols|tojson }};
 var ALL_SYMS={{ all_symbols|tojson }};
 var AVAILABLE_STRATEGIES = {{ available_strategies|tojson }};
 var CURRENT_STRATEGY = {{ current_strategy|tojson }};
+var CURRENT_MODE = {{ current_mode|tojson }};
 var _backtestWallet = 100000;
 var _backtestFromDate = '';
 var _backtestToDate = '';
+var _backtestMode = CURRENT_MODE || 'INTRADAY';
 var _backtestRunning = false;
 var _backtestResults = null;
 var _lastOrderCount=-1;
@@ -4810,6 +4891,19 @@ function renderPTSettings(el){
                     <div id="strategyStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
                 </div>
                 <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                    <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">💼 Trading Mode</h3>
+                    <p style="font-size:10px;color:var(--text3);margin-bottom:10px;line-height:1.5;">
+                        <b>Intraday (MIS):</b> ~5x leverage, auto square-off at 15:15, restricted to trade slots.<br>
+                        <b>Delivery (CNC):</b> full cash per share, no leverage, no forced square-off.
+                    </p>
+                    <select id="modeSelect" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
+                        <option value="INTRADAY" ${CURRENT_MODE==='INTRADAY'?'selected':''}>Intraday (MIS · Leveraged)</option>
+                        <option value="DELIVERY" ${CURRENT_MODE==='DELIVERY'?'selected':''}>Delivery (CNC · Cash)</option>
+                    </select>
+                    <button class="btn btn-gold" onclick="saveMode()" style="width:100%;justify-content:center;padding:8px;"><i class="fas fa-save"></i> Save Trading Mode</button>
+                    <div id="modeStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
+                </div>
+                <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
                     <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">🔑 API Keys</h3>
                     <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Kite API Key</label>
                     <input type="text" id="settingsApiKey" placeholder="Enter your API key" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
@@ -4824,6 +4918,32 @@ function renderPTSettings(el){
             </div>
         </div>
     `;
+}
+
+function saveMode(){
+var sel = document.getElementById('modeSelect');
+var mode = sel.value;
+var status = document.getElementById('modeStatus');
+status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Saving...</span>';
+fetch('/api/user/update-mode', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({mode: mode})
+})
+.then(r=>r.json())
+.then(d=>{
+    if(d.status==='ok'){
+        status.innerHTML='<span style="color:var(--green);">✅ '+d.msg+'</span>';
+        showToast('✅ Trading mode set to '+mode);
+        CURRENT_MODE = mode;
+        setTimeout(()=>location.reload(), 1000);
+    } else {
+        status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
+    }
+})
+.catch(e=>{
+    status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
+});
 }
 
 function saveStrategy(){
@@ -4883,6 +5003,7 @@ function renderPTBacktest(el) {
     var wallet = _backtestWallet || 100000;
     var fromDate = _backtestFromDate || '';
     var toDate = _backtestToDate || '';
+    var mode = _backtestMode || CURRENT_MODE || 'INTRADAY';
     var running = _backtestRunning;
     var results = _backtestResults;
     var statusMsg = running ? 'Running...' : (results ? 'Done' : '');
@@ -4892,7 +5013,7 @@ function renderPTBacktest(el) {
             <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">📈 Backtest</h2>
             <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">Test your selected strategy on pinned stocks over a custom date range.</p>
             <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end;">
                     <div>
                         <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Initial Wallet (₹)</label>
                         <input type="number" id="backtestWallet" value="${wallet}" step="10000" min="1000" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
@@ -4904,6 +5025,13 @@ function renderPTBacktest(el) {
                     <div>
                         <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">To Date</label>
                         <input type="date" id="backtestToDate" value="${toDate}" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Mode</label>
+                        <select id="backtestMode" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                            <option value="INTRADAY" ${mode==='INTRADAY'?'selected':''}>Intraday (MIS)</option>
+                            <option value="DELIVERY" ${mode==='DELIVERY'?'selected':''}>Delivery (CNC)</option>
+                        </select>
                     </div>
                 </div>
                 <button class="btn btn-p" onclick="runBacktest()" id="backtestRunBtn" style="width:100%;justify-content:center;padding:10px;margin-top:12px;" ${running?'disabled':''}>
@@ -4932,6 +5060,7 @@ function renderPTBacktest(el) {
     var walletInput = document.getElementById('backtestWallet');
     var fromInput = document.getElementById('backtestFromDate');
     var toInput = document.getElementById('backtestToDate');
+    var modeInput = document.getElementById('backtestMode');
     if (walletInput) {
         walletInput.addEventListener('change', function() { _backtestWallet = parseFloat(this.value) || 100000; });
         walletInput.addEventListener('input', function() { _backtestWallet = parseFloat(this.value) || 100000; });
@@ -4942,27 +5071,38 @@ function renderPTBacktest(el) {
     if (toInput) {
         toInput.addEventListener('change', function() { _backtestToDate = this.value; });
     }
+    if (modeInput) {
+        modeInput.addEventListener('change', function() { _backtestMode = this.value; });
+    }
 }
 
 function _displayBacktestResults(res){
     var statsDiv = document.getElementById('backtestStats');
     var tradesDiv = document.getElementById('backtestTrades');
     if (!statsDiv || !tradesDiv) return;
+    var modeLabel = res.mode==='DELIVERY' ? 'Delivery (CNC)' : 'Intraday (MIS)';
     statsDiv.innerHTML=`
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Total Trades</span><br><span style="font-family:Space Mono;font-size:16px;">${res.total_trades}</span></div>
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Win Rate</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.win_rate>=50?'var(--green)':'var(--red)'};">${res.win_rate}%</span></div>
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Net P&L</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.net_pnl>=0?'var(--green)':'var(--red)'};">${res.net_pnl>=0?'+':''}₹${res.net_pnl.toFixed(2)}</span></div>
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Final Wallet</span><br><span style="font-family:Space Mono;font-size:16px;color:var(--gold);">₹${res.final_wallet.toFixed(2)}</span></div>
     `;
+    var modeBadge = '<div style="margin-bottom:10px;font-size:10px;color:var(--text3);font-family:Space Mono,monospace">Mode: <span class="b bg-gold">'+modeLabel+'</span></div>';
+    function _fmtTime(iso){
+        if(!iso) return '—';
+        var d = new Date(iso);
+        if(isNaN(d.getTime())) return String(iso).slice(11,16) || '—';
+        return d.toTimeString().slice(0,5);
+    }
     if(res.trades && res.trades.length){
-        var html='<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
+        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
         res.trades.forEach(t=>{
-            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+            html+=`<tr><td class="num">${t.date||'—'}</td><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
         });
         html+='</tbody></table>';
         tradesDiv.innerHTML=html;
     } else {
-        tradesDiv.innerHTML='<p style="color:var(--text3);font-size:12px;">No trades executed.</p>';
+        tradesDiv.innerHTML=modeBadge+'<p style="color:var(--text3);font-size:12px;">No trades executed.</p>';
     }
     document.getElementById('backtestResults').style.display='block';
 }
@@ -4971,6 +5111,7 @@ function runBacktest(){
     var wallet = parseFloat(document.getElementById('backtestWallet').value) || 100000;
     var fromDate = document.getElementById('backtestFromDate').value;
     var toDate = document.getElementById('backtestToDate').value;
+    var mode = document.getElementById('backtestMode') ? document.getElementById('backtestMode').value : (CURRENT_MODE||'INTRADAY');
     var status = document.getElementById('backtestStatus');
     var runBtn = document.getElementById('backtestRunBtn');
     if (!fromDate || !toDate) {
@@ -4981,9 +5122,9 @@ function runBacktest(){
         status.innerHTML='<span style="color:var(--red);">From date must be before To date.</span>';
         return;
     }
-    // Set running state
     _backtestRunning = true;
     _backtestResults = null;
+    _backtestMode = mode;
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
     status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>';
     document.getElementById('backtestResults').style.display='none';
@@ -4991,7 +5132,7 @@ function runBacktest(){
     fetch('/api/backtest/run', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({wallet: wallet, from_date: fromDate, to_date: toDate})
+        body: JSON.stringify({wallet: wallet, from_date: fromDate, to_date: toDate, mode: mode})
     })
     .then(r=>r.json())
     .then(d=>{
