@@ -4243,12 +4243,14 @@ def market_movers():
         _, kite, _, _, _ = get_user_engines()
         if not kite:
             return jsonify({'status': 'error', 'msg': 'Not logged in'})
-        candidates = [get_symbol_map().get(s) for s in PRIORITY_SYMBOLS[:150] if s in get_symbol_map()]
+        symbol_map = get_symbol_map()
+        candidates = [symbol_map.get(s) for s in PRIORITY_SYMBOLS[:150] if s in symbol_map]
         gainers, losers, vol_gainers, momentum = [], [], [], []
         now = datetime.now()
-        start5 = now - timedelta(days=3)
+        # Widened lookback to reliably span holidays/long weekends
+        start5 = now - timedelta(days=10)
         ohlc_map = {}
- 
+
         try:
             batch_size = 100
             sym_list = [s["symbol"] for s in candidates]
@@ -4261,53 +4263,69 @@ def market_movers():
                     ohlc_map[sym] = val
         except Exception as e:
             logger.warning(f"OHLC batch fetch error: {e}")
- 
+
+        skipped_no_prev_close = 0
+
         for sym_info in candidates:
             try:
                 _hist_limiter.wait(f"movers hist {sym_info['symbol']}")
                 data = kite.historical_data(sym_info["token"], start5, now, "5minute")
                 if not data or len(data) < 10:
                     continue
- 
+
                 df = pd.DataFrame(data)
-                ltp = float(df["close"].iloc[-1])
-                if ltp < 50:
-                    continue
- 
+                sym = sym_info["symbol"]
+
                 today_str = now.strftime("%Y-%m-%d")
                 dt_series = pd.to_datetime(df["date"])
-                yesterday_bars = df[dt_series.dt.strftime("%Y-%m-%d") < today_str]
-                prev_close = (
-                    float(yesterday_bars["close"].iloc[-1])
-                    if len(yesterday_bars) > 0
-                    else float(df["close"].iloc[0])
-                )
-                change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0
+                today_mask = dt_series.dt.strftime("%Y-%m-%d") == today_str
+                yesterday_bars = df[~today_mask]
+
+                # Require a genuine prior trading day's close. If we don't have
+                # one even with a 10-day lookback, skip the stock rather than
+                # fabricate a prev_close from today's own data (which would
+                # produce a fake/misleading change%).
+                if len(yesterday_bars) == 0:
+                    skipped_no_prev_close += 1
+                    continue
+                prev_close = float(yesterday_bars["close"].iloc[-1])
+                if prev_close <= 0:
+                    skipped_no_prev_close += 1
+                    continue
+
+                # Single source of truth for LTP: prefer live OHLC quote (most
+                # current), fall back to last historical candle close only if
+                # the quote batch didn't return this symbol.
+                ohlc_entry = ohlc_map.get(sym, {})
+                if ohlc_entry.get("last_price"):
+                    ltp = float(ohlc_entry["last_price"])
+                else:
+                    ltp = float(df["close"].iloc[-1])
+
+                if ltp < 50:
+                    continue
+
+                change_pct = round((ltp - prev_close) / prev_close * 100, 2)
+
                 avg_vol = float(df["volume"].iloc[-20:].mean()) if len(df) >= 20 else float(df["volume"].mean())
                 cur_vol = int(df["volume"].iloc[-1])
                 vol_ratio = round(cur_vol / avg_vol, 2) if avg_vol > 0 else 0
- 
-                sym = sym_info["symbol"]
-                ohlc = ohlc_map.get(sym, {}).get("ohlc", {})
- 
+
+                ohlc = ohlc_entry.get("ohlc", {})
                 if ohlc and ohlc.get("high") and ohlc.get("low"):
                     today_high = float(ohlc["high"])
                     today_low = float(ohlc["low"])
                 else:
-                    today_bars = df[dt_series.dt.strftime("%Y-%m-%d") == today_str]
+                    today_bars = df[today_mask]
                     if len(today_bars) > 0:
                         today_high = float(today_bars["high"].max())
                         today_low = float(today_bars["low"].min())
                     else:
                         today_high = round(ltp * 1.001, 2)
                         today_low = round(ltp * 0.999, 2)
- 
-                day_range_pct = round((today_high - today_low) / prev_close * 100, 2) if prev_close > 0 else 0
- 
-                if ohlc_map.get(sym, {}).get("last_price"):
-                    ltp = float(ohlc_map[sym]["last_price"])
-                    change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close > 0 else change_pct
- 
+
+                day_range_pct = round((today_high - today_low) / prev_close * 100, 2)
+
                 try:
                     d = df["close"].diff()
                     g = d.where(d > 0, 0).ewm(com=13, adjust=False).mean()
@@ -4315,7 +4333,7 @@ def market_movers():
                     rsi = float(100 - 100 / (1 + g / l_s.clip(lower=1e-10)).iloc[-1])
                 except Exception:
                     rsi = 50.0
- 
+
                 item = {
                     "symbol": sym,
                     "ltp": round(ltp, 2),
@@ -4329,28 +4347,32 @@ def market_movers():
                     "day_range_pct": day_range_pct,
                     "rsi": round(rsi, 1),
                 }
- 
+
                 if change_pct > 0.3: gainers.append(item)
                 elif change_pct < -0.3: losers.append(item)
                 if vol_ratio > 1.5: vol_gainers.append(item)
                 if vol_ratio > 1.3 and abs(change_pct) > 0.3:
                     momentum.append(item)
- 
+
             except Exception as e:
                 logger.debug(f"Movers {sym_info['symbol']}: {e}")
                 continue
- 
+
         gainers.sort(key=lambda x: -x["change"])
         losers.sort(key=lambda x: x["change"])
         vol_gainers.sort(key=lambda x: -x["vol_ratio"])
         momentum.sort(key=lambda x: -(abs(x["change"]) * x["vol_ratio"]))
- 
+
+        if skipped_no_prev_close:
+            logger.info(f"Movers: skipped {skipped_no_prev_close} symbols with no reliable prev_close")
+
         return jsonify({
             "gainers": gainers[:15],
             "losers": losers[:15],
             "vol_gainers": vol_gainers[:15],
             "momentum": momentum[:15],
             "as_of": now.strftime("%H:%M:%S"),
+            "skipped": skipped_no_prev_close,
         })
     except Exception as e:
         logger.error(f"Movers error: {e}")
