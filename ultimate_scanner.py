@@ -26,6 +26,7 @@ warnings.filterwarnings('ignore')
 # ── Encryption ──────────────────────────────────────────────
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from werkzeug.security import check_password_hash
 load_dotenv()
 
 def get_cipher():
@@ -119,13 +120,27 @@ class DateTimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 # ==================== CONFIGURATION ====================
+
+# Anchor all relative app paths (data/, backups, etc.) to the directory this
+# script lives in — NOT the process's current working directory.
+# A bare relative path like "data/<user>" only resolves correctly when the
+# app happens to be launched with CWD == the project folder (which is what
+# happens when you run `python ultimate_scanner.py` by hand from inside it).
+# If the same script is started a different way on a server — a scheduled
+# task, a service wrapper (NSSM), a systemd unit with a different
+# WorkingDirectory, pm2, supervisor, etc. — the CWD can be something else
+# entirely, so "data/..." points at a folder that doesn't exist there, and
+# every file op on it fails (WinError 2 on Windows / FileNotFoundError on
+# Linux) even though the exact same code "worked" when run manually.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 class Config:
     def __init__(self, user_id=None):
         self.user_id = user_id
         if user_id:
-            self.data_dir = f"data/{user_id}"
+            self.data_dir = os.path.join(BASE_DIR, "data", user_id)
         else:
-            self.data_dir = "."
+            self.data_dir = BASE_DIR
         os.makedirs(self.data_dir, exist_ok=True)
         self.TOKEN_FILE = os.path.join(self.data_dir, "access_token.txt")
         self.PAPER_FILE = os.path.join(self.data_dir, "paper_trading.json")
@@ -222,19 +237,14 @@ HIGH_TRUST_STRATEGIES = {
 }
 
 TRADE_SLOTS = [
-    (9*60+15,  10*60+15),
-    (10*60+30, 12*60+30),
-    (14*60+0,  15*60+30),
+    (9*60+15,  14*60+0),
 ]
 
 def _in_trade_slot(mins: int) -> bool:
     return any(start <= mins <= end for start, end in TRADE_SLOTS)
 
 def _slot_label(mins: int) -> str:
-    if   9*60+15  <= mins <= 10*60+15: return "SLOT-1 (9:15–10:15 Momentum)"
-    elif 10*60+30 <= mins <= 12*60+30: return "SLOT-2 (10:30–12:30 Trend)"
-    elif 14*60+0  <= mins <= 15*60+30: return "SLOT-3 (14:00–15:30 Breakout)"
-    elif 12*60+30 <  mins <  14*60+0:  return "AVOID (12:30–14:00 Lunch Chop)"
+    if   9*60+15  <= mins <= 14*60+0:  return "SLOT-1 (9:15–14:00 Trading Window)"
     elif mins < 9*60+15:               return "PRE-MARKET"
     else:                              return "CLOSED"
 
@@ -297,7 +307,7 @@ def calc_zerodha_charges(buy_price, sell_price, qty, exchange='NSE'):
 _instrument_cache = None
 
 def get_instrument_cache(kite):
-    global _instrument_cache
+    global _instrument_cache, SYMBOL_MAP
     if _instrument_cache is None:
         try:
             _other_limiter.wait("instruments")
@@ -314,6 +324,7 @@ def get_instrument_cache(kite):
                         "name":   inst.get("name", inst["tradingsymbol"]),
                     })
             _instrument_cache = stocks
+            SYMBOL_MAP = {s['symbol']: s for s in stocks}
             logger.info(f"Instrument cache loaded: {len(stocks)} stocks")
         except Exception as e:
             logger.error(f"Failed to fetch instruments: {e}")
@@ -339,6 +350,7 @@ class UserManager:
                     "name": data["name"],
                     "kite_api_key": decrypt_secret(data["kite_api_key"]),
                     "kite_api_secret": decrypt_secret(data["kite_api_secret"]),
+                    "password_hash": data.get("password_hash", ""),
                 }
             cls._users = decrypted
         return cls._users
@@ -435,7 +447,7 @@ class UserManager:
             strategy_name, strategies_dict = cls.get_user_strategy(user_id)
             trading_mode = cls.get_user_mode(user_id)
             scanner = cls.get_scanner(user_id)
-            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner, trading_mode=trading_mode)
+            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner, trading_mode=trading_mode, strategy_name=strategy_name)
             cls._paper_engines[user_id] = pe
             pe.start(cls.get_kite(user_id))
         return cls._paper_engines[user_id]
@@ -1155,7 +1167,8 @@ class FullScanner:
  
             ind5 = Indicators.calculate_all(df5)
             i5 = len(df5) - 1
-            g5 = _panel_gates(ind5, i5)
+            panels_on = paper_engine.panels_enabled()
+            g5 = _panel_gates(ind5, i5) if panels_on else paper_engine._null_gates()
  
             df5_w = df5.iloc[-60:].reset_index(drop=True)
             ind5_w = ind5.iloc[-60:].reset_index(drop=True)
@@ -1165,15 +1178,22 @@ class FullScanner:
             sel5_pct = strat5_s / tot5 * 100 if tot5 > 0 else 50.0
             soft5_b = sum([g5.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
             soft5_s = sum([g5.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-            buy5_score = soft5_b * 15.0 + g5.get("buy_bonus", 0) + buy5_pct * 0.2
-            sell5_score = soft5_s * 15.0 + g5.get("sell_bonus", 0) + sel5_pct * 0.2
- 
-            if not g5.get("p8_ok", True):
-                buy5_score -= 15.0
-                sell5_score -= 15.0
-            if not g5.get("p9_ok", True):
-                buy5_score -= 10.0
-                sell5_score -= 10.0
+            if panels_on:
+                # Full panel/gate scoring — calibrated for v4_high_trust only.
+                buy5_score = soft5_b * 15.0 + g5.get("buy_bonus", 0) + buy5_pct * 0.2
+                sell5_score = soft5_s * 15.0 + g5.get("sell_bonus", 0) + sel5_pct * 0.2
+                if not g5.get("p8_ok", True):
+                    buy5_score -= 15.0
+                    sell5_score -= 15.0
+                if not g5.get("p9_ok", True):
+                    buy5_score -= 10.0
+                    sell5_score -= 10.0
+            else:
+                # Native scoring for any other strategy — score is purely that
+                # strategy's own 5-min vote strength (0-100%), no panel bonuses
+                # or vetoes borrowed from v4_high_trust.
+                buy5_score = buy5_pct
+                sell5_score = sel5_pct
  
             _hist_limiter.wait(f"15min {sym}")
             data15 = kite.historical_data(token, start15_dt, end, "15minute")
@@ -1187,17 +1207,21 @@ class FullScanner:
                 df15 = pd.DataFrame(data15)
                 ind15 = Indicators.calculate_all(df15)
                 i15 = len(df15) - 1
-                g15 = _panel_gates(ind15, i15)
                 df15_w = df15.iloc[-40:].reset_index(drop=True)
                 ind15_w = ind15.iloc[-40:].reset_index(drop=True)
                 htf_strat_b, htf_strat_s, _ = _strat_votes(df15_w, ind15_w, paper_engine.strategies_dict)
                 tot15 = htf_strat_b + htf_strat_s
                 buy15_pct = htf_strat_b / tot15 * 100 if tot15 > 0 else 50.0
                 sel15_pct = htf_strat_s / tot15 * 100 if tot15 > 0 else 50.0
-                soft15_b = sum([g15.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
-                soft15_s = sum([g15.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-                htf_buy_score = soft15_b * 12.0 + g15.get("buy_bonus", 0) + buy15_pct * 0.15
-                htf_sell_score = soft15_s * 12.0 + g15.get("sell_bonus", 0) + sel15_pct * 0.15
+                if panels_on:
+                    g15 = _panel_gates(ind15, i15)
+                    soft15_b = sum([g15.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
+                    soft15_s = sum([g15.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
+                    htf_buy_score = soft15_b * 12.0 + g15.get("buy_bonus", 0) + buy15_pct * 0.15
+                    htf_sell_score = soft15_s * 12.0 + g15.get("sell_bonus", 0) + sel15_pct * 0.15
+                else:
+                    htf_buy_score = buy15_pct
+                    htf_sell_score = sel15_pct
                 raw = float(ind15["adx"].iloc[-1]) if "adx" in ind15.columns else 0
                 htf_adx = 0 if np.isnan(raw) else raw
                 raw = float(ind15["rsi"].iloc[-1]) if "rsi" in ind15.columns else 50
@@ -1486,17 +1510,37 @@ class PaperTradingEngine:
     ATR_SL_MULTIPLIER = 1.5
     SECTOR_BIAS_SCORE = 6.0
     SECTOR_BIAS_TTL = 300
+    DIAG_LOG_COOLDOWN_SECONDS = 300
+    # _save() runs on almost every signal-log line (multiple times a second
+    # while monitoring is active), but a backup COPY of the whole paper file
+    # is much heavier and only useful as periodic point-in-time snapshots —
+    # not something that needs to happen on every single save. Throttling
+    # the backup itself (independent of the live file write, which still
+    # happens every time) means the 100-file retention cap in _backup_file
+    # actually spans hours of history instead of a couple of minutes.
+    BACKUP_INTERVAL_SECONDS = 300
+    # The p1-p10 panel/gate scoring system (_panel_gates, sector bias,
+    # HTF-conflict penalties, ATR/candle vetoes, MIN_SOFT_LAYERS, etc.) was
+    # purpose-built around v4_high_trust's indicator set and thresholds.
+    # It must NOT be silently applied to other strategies, which have their
+    # own internal entry logic and may disagree with these assumptions.
+    # Only the strategy named below gets the full panel-gate treatment;
+    # any other selected strategy falls back to native vote-based scoring
+    # (see _panels_enabled() / _check_signal() / _score_stock()).
+    PANEL_GATE_STRATEGY = 'v4_high_trust'
     
-    def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY'):
+    def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY', strategy_name=None):
         self.config = config
         self.strategies_dict = strategies_dict
         self.scanner = scanner
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
+        self.strategy_name = strategy_name or self.PANEL_GATE_STRATEGY
         self.PAPER_FILE = config.PAPER_FILE
         self.PAPER_BACKUP_DIR = config.PAPER_BACKUP_DIR
         os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
         self._lock = threading.RLock()
         self._health_lock = threading.Lock()
+        self._last_backup_time = 0.0
         self.data = self._load()
         self._monitor_thread = None
         self._running = False
@@ -1512,7 +1556,42 @@ class PaperTradingEngine:
         self._margin_cache_ttl = 300
         self._fast_exit_thread = None
         self._sector_bias_cache = {}
-        logger.info(f"PaperTradingEngine initialized [mode={self.trading_mode}]")
+        self._diag_log_cooldown = {}
+        logger.info(f"PaperTradingEngine initialized [mode={self.trading_mode}] [strategy={self.strategy_name}] [panel_gates={'ON' if self.panels_enabled() else 'OFF (native strategy scoring)'}]")
+
+    def panels_enabled(self):
+        """True only when the active strategy is the one the panel/gate
+        system (_panel_gates, sector bias, HTF-conflict logic, soft-layer
+        minimums, ATR/candle vetoes) was designed for. Any other strategy
+        is scored purely from its own triggered signals."""
+        return self.strategy_name == self.PANEL_GATE_STRATEGY
+
+    def _null_gates(self):
+        """Neutral gate dict used when panels are disabled for the active
+        strategy — every panel reads False/0 so it contributes nothing to
+        scoring, and no panel-specific veto (doji, ATR range, supertrend
+        advisory) can fire for a strategy the panels weren't built for."""
+        g = {k: False for k in ['p1_buy','p1_sell','p2_buy','p2_sell','p3_buy','p3_sell',
+                                 'p4_buy','p4_sell','p5_buy','p5_sell','p6_buy','p6_sell',
+                                 'p7_buy','p7_sell','p8_ok','p9_ok','p10_buy','p10_sell']}
+        g['p8_ok'] = True
+        g['p9_ok'] = True
+        g['buy_bonus'] = 0.0
+        g['sell_bonus'] = 0.0
+        return g
+
+    def _log_diag(self, key, entry):
+        """Log a low-value/repetitive diagnostic rejection (e.g. price too low,
+        insufficient data) at most once per cooldown window per key, so a
+        permanently-unqualified pinned stock can't flood the signal log every
+        cycle and evict real signals for other symbols."""
+        now_ts = time.time()
+        with self._lock:
+            last = self._diag_log_cooldown.get(key, 0)
+            if now_ts - last < self.DIAG_LOG_COOLDOWN_SECONDS:
+                return
+            self._diag_log_cooldown[key] = now_ts
+        self._add_signal_log(entry)
 
     def _fast_exit_loop(self):
         logger.info("Fast exit loop started")
@@ -1574,14 +1653,31 @@ class PaperTradingEngine:
                 logger.error(f"Fast exit loop error: {e}")
                 time.sleep(5)
     
-    def _backup_file(self, filepath):
+    def _backup_file(self, filepath, force=False):
         try:
+            now_ts = time.time()
+            if not force and (now_ts - self._last_backup_time) < self.BACKUP_INTERVAL_SECONDS:
+                return
             if os.path.exists(filepath):
-                backup_name = f"{self.PAPER_BACKUP_DIR}/paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                self._last_backup_time = now_ts
+                # os.path.join here (not an f-string '/') keeps the whole path
+                # using one consistent separator convention on every OS —
+                # mixing a literal '/' with os.path.join's native '\' on
+                # Windows produced malformed paths like
+                # "data\\rahul\\backups/paper_...json" that could fail with
+                # WinError 2 depending on how the OS/AV layer parses them.
+                backup_name = os.path.join(
+                    self.PAPER_BACKUP_DIR,
+                    f"paper_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json",
+                )
+                os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
                 shutil.copy(filepath, backup_name)
-                backups = sorted(glob.glob(f"{self.PAPER_BACKUP_DIR}/paper_*.json"))
+                backups = sorted(glob.glob(os.path.join(self.PAPER_BACKUP_DIR, "paper_*.json")))
                 for old in backups[:-100]:
-                    os.remove(old)
+                    try:
+                        os.remove(old)
+                    except FileNotFoundError:
+                        pass  # already removed by a concurrent cleanup pass
         except Exception as e:
             logger.error(f"Backup error: {e}")
     
@@ -1629,10 +1725,14 @@ class PaperTradingEngine:
             'daily_stats': {'date': datetime.now().strftime('%Y-%m-%d'), 'pnl': 0.0, 'trades': 0, 'wins': 0, 'losses': 0}
         }
     
-    def _save(self):
+    def _save(self, force_backup=False):
         with self._lock:
             try:
-                self._backup_file(self.PAPER_FILE)
+                # The live file is always written every time _save() runs.
+                # The backup COPY is throttled (see BACKUP_INTERVAL_SECONDS) —
+                # force_backup=True skips the throttle for events worth an
+                # immediate point-in-time snapshot (position opened/closed).
+                self._backup_file(self.PAPER_FILE, force=force_backup)
                 with open(self.PAPER_FILE, 'w') as f:
                     json.dump(self.data, f, indent=2, cls=DateTimeEncoder)
             except Exception as e:
@@ -2232,7 +2332,7 @@ class PaperTradingEngine:
         if not _in_trade_slot(mins):
             _block(
                 f"Outside trade slot [{_slot_label(mins)}] — "
-                f"allowed 9:15–10:15, 10:30–12:30, 14:00–15:30"
+                f"allowed 9:15–14:00"
             )
             return None
         if price < self.MIN_PRICE:
@@ -2324,7 +2424,7 @@ class PaperTradingEngine:
         logger.info(f"OPENED {symbol} {side} {qty} @ {price:.2f}")
         logger.info(f"Target: {target:.2f} | SL: {stoploss:.2f} | Margin: {margin_used:.2f} "
                    f"({margin_pct*100:.1f}% = {round(1/margin_pct,2) if margin_pct>0 else 5}x)")
-        self._save()
+        self._save(force_backup=True)
         return pos
     
     def _close_position_nolock(self, symbol, exit_price=None, reason='SIGNAL'):
@@ -2387,7 +2487,7 @@ class PaperTradingEngine:
         self.active_stock_orders.pop(symbol, None)
         self.last_exit_time[symbol] = datetime.now()
         logger.info(f"CLOSED {symbol} | Gross {gross_pnl:.2f} | Net {net_pnl:.2f}")
-        self._save()
+        self._save(force_backup=True)
         return trade
     
     def _update_daily_pnl(self, trade):
@@ -2547,6 +2647,17 @@ class PaperTradingEngine:
 
     def _check_signal(self, symbol, kite, prefetched_ltp=None):
         if symbol not in SYMBOL_MAP:
+            self._log_diag(
+                f"{symbol}:not_in_map",
+                {
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "symbol": symbol,
+                    "ltp": round(prefetched_ltp, 2) if prefetched_ltp is not None else 0,
+                    "status": "REJECTED",
+                    "reason": "Symbol not found in instrument cache (delisted/renamed/typo?)",
+                },
+            )
             return
         try:
             now = datetime.now()
@@ -2568,6 +2679,20 @@ class PaperTradingEngine:
                 "5minute",
             )
             if not data5 or len(data5) < 80:
+                self._log_diag(
+                    f"{symbol}:insufficient_data",
+                    {
+                        "time": now.strftime("%H:%M:%S"),
+                        "date": now.strftime("%Y-%m-%d"),
+                        "symbol": symbol,
+                        "ltp": round(prefetched_ltp, 2) if prefetched_ltp is not None else 0,
+                        "status": "REJECTED",
+                        "reason": (
+                            f"Insufficient historical data "
+                            f"({len(data5) if data5 else 0} bars, need ≥80)"
+                        ),
+                    },
+                )
                 return
  
             df = pd.DataFrame(data5)
@@ -2580,6 +2705,20 @@ class PaperTradingEngine:
             )
  
             if ltp_initial < self.MIN_PRICE:
+                self._log_diag(
+                    f"{symbol}:min_price",
+                    {
+                        "time": now.strftime("%H:%M:%S"),
+                        "date": now.strftime("%Y-%m-%d"),
+                        "symbol": symbol,
+                        "ltp": round(ltp_initial, 2),
+                        "status": "REJECTED",
+                        "reason": (
+                            f"Price ₹{ltp_initial:.2f} below minimum "
+                            f"₹{self.MIN_PRICE:.0f} for trading"
+                        ),
+                    },
+                )
                 return
  
             avg_vol = float(df["volume"].iloc[-20:].mean())
@@ -2610,7 +2749,8 @@ class PaperTradingEngine:
             allow_buy = pin_dir in ("BUY", "BOTH")
             allow_sell = pin_dir in ("SELL", "BOTH")
  
-            g = _panel_gates(ind, len(df) - 1)
+            panels_on = self.panels_enabled()
+            g = _panel_gates(ind, len(df) - 1) if panels_on else self._null_gates()
             df_w = df.iloc[-60:].reset_index(drop=True)
             ind_w = ind.iloc[-60:].reset_index(drop=True)
  
@@ -2648,71 +2788,96 @@ class PaperTradingEngine:
  
             soft_b = sum([g.get(f"p{i}_buy", 0) for i in [1, 2, 3, 4, 5, 10]])
             soft_s = sum([g.get(f"p{i}_sell", 0) for i in [1, 2, 3, 4, 5, 10]])
- 
-            buy_score = soft_b * 15.0 + g.get("buy_bonus", 0) + s5_buy_pct * 0.2
-            sell_score = soft_s * 15.0 + g.get("sell_bonus", 0) + s5_sel_pct * 0.2
- 
-            if not g.get("p8_ok", True):
-                buy_score -= 15.0
-                sell_score -= 15.0
-            if not g.get("p9_ok", True):
-                buy_score -= 10.0
-                sell_score -= 10.0
- 
+
             htf_bull = (
                 float(ind["htf_bull"].iloc[-1])
                 if "htf_bull" in ind.columns
                 else 0.5
             )
- 
-            if g.get("p6_buy", False):
-                buy_score += 8.0
-            elif g.get("p6_sell", False):
-                buy_score -= 4.0
-            if g.get("p6_sell", False):
-                sell_score += 8.0
-            elif g.get("p6_buy", False):
-                sell_score -= 4.0
 
-            htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
-            htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
-            if htf15_conflict_buy:
-                buy_score -= 10.0
-            if htf15_conflict_sell:
-                sell_score -= 10.0
-
-            dual_conflict_buy = g.get("p6_sell", False) and htf15_conflict_buy
-            dual_conflict_sell = g.get("p6_buy", False) and htf15_conflict_sell
-            effective_buy_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_buy else self.MIN_SIGNAL_SCORE)
-            effective_sell_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_sell else self.MIN_SIGNAL_SCORE)
-
-            _sec_dir, _sec_name, _sec_meta = self._get_sector_bias(symbol)
             sector_bias_log = ""
-            if _sec_dir and _sec_name:
-                if _sec_dir == "BUY":
-                    buy_score += self.SECTOR_BIAS_SCORE
-                    sell_score -= self.SECTOR_BIAS_SCORE
-                    sector_bias_log = f"Sector {_sec_name} BULLISH → +{self.SECTOR_BIAS_SCORE:.0f} BUY"
-                else:
-                    sell_score += self.SECTOR_BIAS_SCORE
-                    buy_score -= self.SECTOR_BIAS_SCORE
-                    sector_bias_log = f"Sector {_sec_name} BEARISH → +{self.SECTOR_BIAS_SCORE:.0f} SELL"
-                logger.debug(f"[{symbol}] {sector_bias_log}")
 
-            buy_ok = (
-                allow_buy
-                and htf_bull >= 0.45
-                and soft_b >= self.MIN_SOFT_LAYERS
-                and s5_buy_pct >= self.MIN_VOTE_PCT
-                and buy_score >= effective_buy_min
-            )
-            sell_ok = (
-                allow_sell
-                and htf_bull <= 0.55
-                and soft_s >= self.MIN_SOFT_LAYERS
-                and s5_sel_pct >= self.MIN_VOTE_PCT
-                and sell_score >= effective_sell_min
-            )
+            if panels_on:
+                # ── Full panel/gate pipeline — built for & only used by v4_high_trust ──
+                buy_score = soft_b * 15.0 + g.get("buy_bonus", 0) + s5_buy_pct * 0.2
+                sell_score = soft_s * 15.0 + g.get("sell_bonus", 0) + s5_sel_pct * 0.2
+
+                if not g.get("p8_ok", True):
+                    buy_score -= 15.0
+                    sell_score -= 15.0
+                if not g.get("p9_ok", True):
+                    buy_score -= 10.0
+                    sell_score -= 10.0
+
+                if g.get("p6_buy", False):
+                    buy_score += 8.0
+                elif g.get("p6_sell", False):
+                    buy_score -= 4.0
+                if g.get("p6_sell", False):
+                    sell_score += 8.0
+                elif g.get("p6_buy", False):
+                    sell_score -= 4.0
+
+                htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
+                htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
+                if htf15_conflict_buy:
+                    buy_score -= 10.0
+                if htf15_conflict_sell:
+                    sell_score -= 10.0
+
+                dual_conflict_buy = g.get("p6_sell", False) and htf15_conflict_buy
+                dual_conflict_sell = g.get("p6_buy", False) and htf15_conflict_sell
+                effective_buy_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_buy else self.MIN_SIGNAL_SCORE)
+                effective_sell_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_sell else self.MIN_SIGNAL_SCORE)
+
+                _sec_dir, _sec_name, _sec_meta = self._get_sector_bias(symbol)
+                if _sec_dir and _sec_name:
+                    if _sec_dir == "BUY":
+                        buy_score += self.SECTOR_BIAS_SCORE
+                        sell_score -= self.SECTOR_BIAS_SCORE
+                        sector_bias_log = f"Sector {_sec_name} BULLISH → +{self.SECTOR_BIAS_SCORE:.0f} BUY"
+                    else:
+                        sell_score += self.SECTOR_BIAS_SCORE
+                        buy_score -= self.SECTOR_BIAS_SCORE
+                        sector_bias_log = f"Sector {_sec_name} BEARISH → +{self.SECTOR_BIAS_SCORE:.0f} SELL"
+                    logger.debug(f"[{symbol}] {sector_bias_log}")
+
+                buy_ok = (
+                    allow_buy
+                    and htf_bull >= 0.45
+                    and soft_b >= self.MIN_SOFT_LAYERS
+                    and s5_buy_pct >= self.MIN_VOTE_PCT
+                    and buy_score >= effective_buy_min
+                )
+                sell_ok = (
+                    allow_sell
+                    and htf_bull <= 0.55
+                    and soft_s >= self.MIN_SOFT_LAYERS
+                    and s5_sel_pct >= self.MIN_VOTE_PCT
+                    and sell_score >= effective_sell_min
+                )
+            else:
+                # ── Native mode — any strategy other than v4_high_trust. No panel
+                # bonuses/vetoes, no HTF-conflict penalties, no sector bias: the
+                # strategy's own 5-min vote strength is the whole score, and its
+                # own triggered functions are the only requirement to enter. ──
+                buy_score = s5_buy_pct
+                sell_score = s5_sel_pct
+                htf15_conflict_buy = htf15_conflict_sell = False
+                dual_conflict_buy = dual_conflict_sell = False
+                effective_buy_min = self.MIN_VOTE_PCT
+                effective_sell_min = self.MIN_VOTE_PCT
+
+                buy_ok = (
+                    allow_buy
+                    and s5_buy_pct >= self.MIN_VOTE_PCT
+                    and strat5_b >= 1.0
+                )
+                sell_ok = (
+                    allow_sell
+                    and s5_sel_pct >= self.MIN_VOTE_PCT
+                    and strat5_s >= 1.0
+                )
  
             if buy_ok and sell_ok:
                 if sell_score > buy_score:
@@ -2796,6 +2961,7 @@ class PaperTradingEngine:
                 "sector_bias": sector_bias_log,
                 "market_trend": market_trend,
                 "market_regime": market_regime,
+                "strategy_mode": "PANEL (v4_high_trust)" if panels_on else f"NATIVE ({self.strategy_name})",
             }
  
             try:
@@ -2880,7 +3046,7 @@ class PaperTradingEngine:
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
                         f"Outside trade slot — {_current_slot_lbl} "
-                        f"| Allowed: 9:15–10:15, 10:30–12:30, 14:00–15:30"
+                        f"| Allowed: 9:15–14:00"
                     )
                     self._add_signal_log(log_entry)
                     return
@@ -3005,24 +3171,48 @@ class PaperTradingEngine:
  
                 else:
                     reasons = []
-                    raw_buy_ok = (
-                        htf_bull >= 0.45
-                        and soft_b >= self.MIN_SOFT_LAYERS
-                        and s5_buy_pct >= self.MIN_VOTE_PCT
-                        and buy_score >= effective_buy_min
-                    )
-                    raw_sell_ok = (
-                        htf_bull <= 0.55
-                        and soft_s >= self.MIN_SOFT_LAYERS
-                        and s5_sel_pct >= self.MIN_VOTE_PCT
-                        and sell_score >= effective_sell_min
-                    )
+                    if panels_on:
+                        raw_buy_ok = (
+                            htf_bull >= 0.45
+                            and soft_b >= self.MIN_SOFT_LAYERS
+                            and s5_buy_pct >= self.MIN_VOTE_PCT
+                            and buy_score >= effective_buy_min
+                        )
+                        raw_sell_ok = (
+                            htf_bull <= 0.55
+                            and soft_s >= self.MIN_SOFT_LAYERS
+                            and s5_sel_pct >= self.MIN_VOTE_PCT
+                            and sell_score >= effective_sell_min
+                        )
+                    else:
+                        raw_buy_ok = (s5_buy_pct >= self.MIN_VOTE_PCT and strat5_b >= 1.0)
+                        raw_sell_ok = (s5_sel_pct >= self.MIN_VOTE_PCT and strat5_s >= 1.0)
                     if raw_buy_ok and not allow_buy:
                         reasons.append(f"BUY signal blocked — stock pinned as {pin_dir} only")
                     if raw_sell_ok and not allow_sell:
                         reasons.append(f"SELL signal blocked — stock pinned as {pin_dir} only")
 
-                    if not reasons:
+                    if not reasons and not panels_on:
+                        # Native mode — simple vote-based diagnostics only,
+                        # no panel/HTF/sector machinery to report on.
+                        leaning_buy = buy_score >= sell_score
+                        check_dir = (
+                            "BUY" if (pin_dir == "BOTH" and leaning_buy)
+                            else pin_dir if pin_dir != "BOTH"
+                            else ("BUY" if leaning_buy else "SELL")
+                        )
+                        if check_dir == "BUY":
+                            if s5_buy_pct < self.MIN_VOTE_PCT:
+                                reasons.append(f"5m buy vote {s5_buy_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
+                            if strat5_b < 1.0:
+                                reasons.append(f"No {self.strategy_name} BUY strategy triggered")
+                        else:
+                            if s5_sel_pct < self.MIN_VOTE_PCT:
+                                reasons.append(f"5m sell vote {s5_sel_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
+                            if strat5_s < 1.0:
+                                reasons.append(f"No {self.strategy_name} SELL strategy triggered")
+
+                    if not reasons and panels_on:
                         leaning_buy = buy_score >= sell_score
                         check_dir = (
                             "BUY" if (pin_dir == "BOTH" and leaning_buy)
@@ -3793,24 +3983,71 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     # Only enable this if you are serving over HTTPS (recommended on VPS):
     SESSION_COOKIE_SECURE=os.getenv("FORCE_HTTPS", "true").lower() == "true",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
+
+# ==================== LOGIN RATE LIMITING ====================
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 900  # 15 minutes
+_login_attempts = {}
+_login_attempts_lock = Lock()
+
+def _login_rate_limited(key):
+    with _login_attempts_lock:
+        now = time.time()
+        attempts = [t for t in _login_attempts.get(key, []) if now - t < _LOGIN_WINDOW_SECONDS]
+        _login_attempts[key] = attempts
+        return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+def _login_record_failure(key):
+    with _login_attempts_lock:
+        _login_attempts.setdefault(key, []).append(time.time())
+
+def _login_clear(key):
+    with _login_attempts_lock:
+        _login_attempts.pop(key, None)
 
 # ==================== FLASK ROUTES ====================
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     users = UserManager.load_users()
+    error = None
     if request.method == 'POST':
-        user_id = request.form.get('user_id')
-        session['user_id'] = user_id
-        if UserManager.ensure_authenticated(user_id):
-            return redirect('/')
+        user_id = (request.form.get('user_id') or '').strip()
+        password = request.form.get('password') or ''
+        client_ip = request.remote_addr or 'unknown'
+        rl_key = f"{client_ip}:{user_id}"
+
+        if _login_rate_limited(rl_key):
+            error = "Too many failed attempts. Please try again in 15 minutes."
         else:
-            return redirect(url_for('auth', user_id=user_id))
-    return render_template_string(LOGIN_HTML, users=users)
+            user_data = users.get(user_id)
+            pw_hash = (user_data or {}).get('password_hash') or ''
+            # check_password_hash is called even on a missing user/hash (against a dummy
+            # hash) so response timing doesn't reveal whether the user_id exists.
+            valid = check_password_hash(pw_hash, password) if pw_hash else False
+            if user_data and pw_hash and valid:
+                _login_clear(rl_key)
+                session.clear()
+                session.permanent = True
+                session['user_id'] = user_id
+                logger.info(f"Login OK: {user_id} from {client_ip}")
+                if UserManager.ensure_authenticated(user_id):
+                    return redirect('/')
+                else:
+                    return redirect(url_for('auth', user_id=user_id))
+            else:
+                _login_record_failure(rl_key)
+                logger.warning(f"Failed login attempt for user_id='{user_id}' from {client_ip}")
+                error = "Invalid username or password."
+    return render_template_string(LOGIN_HTML, users=users, error=error)
+
 
 @app.route('/auth/<user_id>')
 def auth(user_id):
+    if session.get('user_id') != user_id:
+        return redirect('/login')
     user_data = UserManager.get_user_data(user_id)
     if not user_data:
         return "User not found", 404
@@ -3976,7 +4213,7 @@ def run_backtest():
 
 # ─── HELPER FOR SYMBOL MAP ──────────────────────────────────
 def get_symbol_map():
-    global _instrument_cache
+    global _instrument_cache, SYMBOL_MAP
     if _instrument_cache is None:
         user_id = session.get('user_id')
         if user_id:
@@ -3984,7 +4221,9 @@ def get_symbol_map():
             get_instrument_cache(kite)
         else:
             return {}
-    return {s['symbol']: s for s in _instrument_cache}
+    sm = {s['symbol']: s for s in _instrument_cache}
+    SYMBOL_MAP = sm
+    return sm
 
 # ─── HELPER FOR USER ENGINES ──────────────────────────────
 def get_user_engines():
@@ -4230,14 +4469,8 @@ def trade_slots_status():
         'in_slot': _in_trade_slot(mins),
         'slot_label': _slot_label(mins),
         'slots': [
-            {'name': 'SLOT-1', 'label': '9:15–10:15', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Momentum/Breakout',
-             'active': 9*60+15 <= mins <= 10*60+15},
-            {'name': 'SLOT-2', 'label': '10:30–12:30', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Trend (BEST)',
-             'active': 10*60+30 <= mins <= 12*60+30},
-            {'name': 'AVOID', 'label': '12:30–14:00', 'quality': '⭐⭐', 'type': 'Lunch Chop — SKIP',
-             'active': 12*60+30 < mins < 14*60+0},
-            {'name': 'SLOT-3', 'label': '14:00–15:30', 'quality': '⭐⭐⭐⭐', 'type': 'Breakout/Reversal',
-             'active': 14*60+0 <= mins <= 15*60+30},
+            {'name': 'SLOT-1', 'label': '9:15–14:00', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Trading Window',
+             'active': 9*60+15 <= mins <= 14*60+0},
         ],
     })
 
@@ -4520,7 +4753,7 @@ def gen_paper_tab(pe):
         '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.7 — Fixed Backtest UI Persistence</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5">'
         '70% wallet · ATR risk sizing (1%/trade) · Target +0.8% · SL -0.5% · SqOff 15:15 · '
-        'Slots: 9:15–10:15 ⭐⭐⭐⭐⭐ | 10:30–12:30 ⭐⭐⭐⭐⭐ | 14:00–15:30 ⭐⭐⭐⭐ · '
+        'Trading Window: 9:15–14:00 ⭐⭐⭐⭐⭐ · '
         'Score≥35 · Vote≥50% · Layers≥2 · Vol≥1.3× · ST advisory · HTF advisory · '
         'DualConflict→Score≥42'
         '</div></div>'
@@ -4830,15 +5063,11 @@ el.innerHTML='<div style="display:flex;flex-direction:column;gap:2px;flex:1;min-
 
 function _slotBadge(tot,isWday){
 if(!isWday)return '';
-var S1s=9*60+15,S1e=10*60+15,S2s=10*60+30,S2e=12*60+30,S3s=14*60,S3e=15*60+30;
-var inS1=(tot>=S1s&&tot<=S1e),inS2=(tot>=S2s&&tot<=S2e),inS3=(tot>=S3s&&tot<=S3e);
-var avoid=(tot>S1e&&tot<S2s)||(tot>S2e&&tot<S3s);
+var S1s=9*60+15,S1e=14*60+0;
+var inS1=(tot>=S1s&&tot<=S1e);
 var c,lbl;
-if(inS1){c='#00e676';lbl='🟢 SLOT 1 ACTIVE — Momentum/Breakout 9:15–10:15 ⭐⭐⭐⭐⭐';}
-else if(inS2){c='#00e676';lbl='🟢 SLOT 2 ACTIVE — Trend Trading BEST 10:30–12:30 ⭐⭐⭐⭐⭐';}
-else if(inS3){c='#e3b341';lbl='🟡 SLOT 3 ACTIVE — Breakout/Reversal 14:00–15:30 ⭐⭐⭐⭐';}
-else if(avoid){c='#ff1744';lbl='🔴 AVOID ZONE — No New Trades (Lunch Chop / Gap)';}
-else{c='#8b949e';lbl='⏸ Outside Market Hours';}
+if(inS1){c='#00e676';lbl='🟢 TRADING WINDOW ACTIVE — 9:15–14:00 ⭐⭐⭐⭐⭐';}
+else{c='#8b949e';lbl='⏸ Outside Trading Window';}
 return '<div style="margin-top:6px;font-size:10px;font-family:Space Mono,monospace;color:'+c+';background:rgba(0,0,0,.25);border:1px solid '+c+'44;border-radius:5px;padding:3px 8px;display:inline-block">'+lbl+'</div>';
 }
 
@@ -5374,7 +5603,7 @@ var searchHtml='<div class="wishlist-search"><div class="wishlist-search-title">
 var scanSection='<div style="background:var(--bg1);border:1px solid rgba(88,166,255,.25);border-radius:9px;padding:14px;margin-bottom:12px" id="fullScanPanel">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">'
     +'<div><div style="font-family:Space Mono,monospace;font-size:12px;font-weight:700;color:var(--blue)">🔎 Full Market Scanner</div>'
-    +'<div style="font-size:10px;color:var(--text3);margin-top:3px">5-min + 15-min MTF scan · Best windows: <span style="color:var(--gold)">8:45–9:10 AM</span> pre-market · <span style="color:var(--gold)">9:30–10:00 AM</span> post-open · <span style="color:var(--gold)">10:15–10:25 AM</span> before Slot 2</div></div>'
+    +'<div style="font-size:10px;color:var(--text3);margin-top:3px">5-min + 15-min MTF scan · Best windows: <span style="color:var(--gold)">8:45–9:10 AM</span> pre-market · <span style="color:var(--gold)">9:30–10:00 AM</span> post-open · Trading window: <span style="color:var(--gold)">9:15 AM – 2:00 PM</span></div></div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
     +'<button class="btn btn-orange" onclick="loadMovers()" style="font-size:11px;padding:5px 10px"><i class="fas fa-fire"></i> Market Movers</button>'
     +'<button class="btn btn-p" id="startScanBtn" onclick="startFullScan()"><i class="fas fa-radar"></i> Start Scan</button>'
@@ -6103,6 +6332,9 @@ LOGIN_HTML = """
 <body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box;">
 <div style="background:#161b22;padding:24px;border-radius:12px;border:1px solid #30363d;width:100%;max-width:340px;box-sizing:border-box;">
 <h2 style="color:#f0c040;margin:0 0 16px;font-size:20px;">Alpha Scanner</h2>
+{% if error %}
+<div style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:#f85149;padding:9px 12px;border-radius:6px;font-size:12px;margin-bottom:14px;">{{ error }}</div>
+{% endif %}
 <form method="post">
 <label style="display:block;margin-bottom:8px;font-size:13px;">Select User</label>
 <select name="user_id" style="width:100%;padding:10px;background:#21262d;color:white;border:1px solid #30363d;border-radius:6px;font-size:14px;box-sizing:border-box;">
@@ -6110,6 +6342,8 @@ LOGIN_HTML = """
 <option value="{{ id }}">{{ data.name }}</option>
 {% endfor %}
 </select>
+<label style="display:block;margin:12px 0 8px;font-size:13px;">Password</label>
+<input type="password" name="password" required autocomplete="current-password" style="width:100%;padding:10px;background:#21262d;color:white;border:1px solid #30363d;border-radius:6px;font-size:14px;box-sizing:border-box;">
 <button type="submit" style="margin-top:14px;width:100%;padding:10px;background:#1f6feb;border:none;border-radius:6px;color:white;font-weight:bold;cursor:pointer;font-size:14px;">Login</button>
 </form>
 </div>
