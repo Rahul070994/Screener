@@ -3604,6 +3604,14 @@ class BacktestEngine:
         wallet = initial_wallet
         positions = {}
 
+        def _release(pos_sym, position, exit_price, reason, close_time):
+            t = self._close_trade(pos_sym, position, exit_price, reason, close_time)
+            trades.append(t)
+            nonlocal wallet
+            margin_used = position['entry_price'] * position['qty'] * margin_pct
+            wallet += margin_used + t['pnl']
+            return t
+
         for sym in pinned_stocks:
             if sym not in symbol_map:
                 continue
@@ -3632,22 +3640,22 @@ class BacktestEngine:
                         pos = positions[sym]
                         # INTRADAY: force square-off by 15:15 — never hold a position overnight
                         if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
-                            trades.append(self._close_trade(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time))
+                            _release(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time)
                             del positions[sym]
                             continue
                         if pos['side'] == 'BUY':
                             if ltp >= pos['target']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET', bar_time))
+                                _release(sym, pos, ltp, 'TARGET', bar_time)
                                 del positions[sym]
                             elif ltp <= pos['stoploss']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS', bar_time))
+                                _release(sym, pos, ltp, 'STOP_LOSS', bar_time)
                                 del positions[sym]
                         else:
                             if ltp <= pos['target']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'TARGET', bar_time))
+                                _release(sym, pos, ltp, 'TARGET', bar_time)
                                 del positions[sym]
                             elif ltp >= pos['stoploss']:
-                                trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS', bar_time))
+                                _release(sym, pos, ltp, 'STOP_LOSS', bar_time)
                                 del positions[sym]
                         continue
 
@@ -3700,7 +3708,9 @@ class BacktestEngine:
                             }
                             wallet -= price * qty * margin_pct
                 for sym, pos in list(positions.items()):
-                    trades.append(self._close_trade(sym, pos, pos['entry_price'], 'END', pos.get('entry_time')))
+                    last_price = float(df['close'].iloc[-1])
+                    _release(sym, pos, last_price, 'DATA_END', pos.get('entry_time'))
+                    del positions[sym]
             except Exception as e:
                 logger.error(f"Backtest error on {sym}: {e}")
 
