@@ -3700,7 +3700,21 @@ class BacktestEngine:
 
 # ==================== FLASK APP ====================
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+
+_flask_secret = os.getenv("FLASK_SECRET_KEY")
+if not _flask_secret:
+    raise ValueError(
+        "FLASK_SECRET_KEY not set in .env file — required for session persistence "
+        "across worker processes/restarts on production servers."
+    )
+app.secret_key = _flask_secret
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    # Only enable this if you are serving over HTTPS (recommended on VPS):
+    SESSION_COOKIE_SECURE=os.getenv("FORCE_HTTPS", "true").lower() == "true",
+)
 
 # ==================== FLASK ROUTES ====================
 
@@ -5893,18 +5907,22 @@ else{if(ptRefreshTimer){clearInterval(ptRefreshTimer);ptRefreshTimer=setInterval
 LOGIN_HTML = """
 <!DOCTYPE html>
 <html>
-<head><title>Login</title></head>
-<body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
-<div style="background:#161b22;padding:30px;border-radius:12px;border:1px solid #30363d;width:300px;">
-<h2 style="color:#f0c040;">Alpha Scanner</h2>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Login</title>
+</head>
+<body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box;">
+<div style="background:#161b22;padding:24px;border-radius:12px;border:1px solid #30363d;width:100%;max-width:340px;box-sizing:border-box;">
+<h2 style="color:#f0c040;margin:0 0 16px;font-size:20px;">Alpha Scanner</h2>
 <form method="post">
-<label style="display:block;margin-bottom:8px;">Select User</label>
-<select name="user_id" style="width:100%;padding:8px;background:#21262d;color:white;border:1px solid #30363d;border-radius:6px;">
+<label style="display:block;margin-bottom:8px;font-size:13px;">Select User</label>
+<select name="user_id" style="width:100%;padding:10px;background:#21262d;color:white;border:1px solid #30363d;border-radius:6px;font-size:14px;box-sizing:border-box;">
 {% for id, data in users.items() %}
 <option value="{{ id }}">{{ data.name }}</option>
 {% endfor %}
 </select>
-<button type="submit" style="margin-top:12px;width:100%;padding:8px;background:#1f6feb;border:none;border-radius:6px;color:white;font-weight:bold;cursor:pointer;">Login</button>
+<button type="submit" style="margin-top:14px;width:100%;padding:10px;background:#1f6feb;border:none;border-radius:6px;color:white;font-weight:bold;cursor:pointer;font-size:14px;">Login</button>
 </form>
 </div>
 </body>
@@ -5927,7 +5945,6 @@ def main():
     print("  📈 Backtest UI now persists across refreshes.")
     print("  📊 Signal logs auto‑delete after 5000 entries.")
     print("=" * 65)
-    app.secret_key = os.urandom(24)
     app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
 
 if __name__ == "__main__":
