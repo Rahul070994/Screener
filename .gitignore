@@ -29,3 +29,5 @@ env/
 *~
 .DS_Store
 access_token.txt
+.env
+alpha_scanner.log
