@@ -338,6 +338,7 @@ class UserManager:
     _paper_engines = {}
     _scanners = {}
     _sector_monitors = {}
+    _backtest_engines = {}
 
     @classmethod
     def load_users(cls):
@@ -3779,8 +3780,63 @@ class BacktestEngine:
         self.strategies_dict = strategies_dict
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.results = None
+        # A backtest walks every 5-min bar in the date range and re-evaluates
+        # the full strategy vote set on each one — for a multi-week range
+        # across several pinned stocks this routinely takes well past a
+        # minute. Running it synchronously inside the Flask request means
+        # nginx's proxy_read_timeout (commonly 60s) fires first and the
+        # client sees a 504, even though the backend was still working fine.
+        # run_async() below runs it in a background thread instead; the
+        # route returns immediately and the client polls /api/backtest/status
+        # (same pattern as FullScanner.run_scan / /scanner/status).
+        self._lock = threading.RLock()
+        self._running = False
+        self._progress = {
+            'status': 'idle',   # idle | running | done | error
+            'done': 0,
+            'total': 0,
+            'current': '',
+            'results': None,
+            'error': None,
+        }
 
-    def run(self, kite, symbol_map, pinned_stocks, initial_wallet=100000, from_date=None, to_date=None):
+    @property
+    def progress(self):
+        with self._lock:
+            return dict(self._progress)
+
+    def _update(self, **kw):
+        with self._lock:
+            self._progress.update(kw)
+
+    def run_async(self, kite, symbol_map, pinned_stocks, initial_wallet=100000, from_date=None, to_date=None):
+        if self._running:
+            return {'status': 'already_running'}
+        self._running = True
+        self._update(status='running', done=0, total=len(pinned_stocks),
+                     current='Starting...', results=None, error=None)
+
+        def _worker():
+            try:
+                results = self.run(
+                    kite, symbol_map, pinned_stocks,
+                    initial_wallet=initial_wallet, from_date=from_date, to_date=to_date,
+                    progress_cb=self._update,
+                )
+                self._update(status='done', done=self._progress.get('total', 0),
+                             current='Complete', results=results)
+            except Exception as e:
+                logger.error(f"Backtest worker error: {e}")
+                traceback.print_exc()
+                self._update(status='error', error=str(e))
+            finally:
+                self._running = False
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        return {'status': 'started'}
+
+    def run(self, kite, symbol_map, pinned_stocks, initial_wallet=100000, from_date=None, to_date=None, progress_cb=None):
         if from_date and to_date:
             start = datetime.fromisoformat(from_date)
             end = datetime.fromisoformat(to_date)
@@ -3802,7 +3858,13 @@ class BacktestEngine:
             wallet += margin_used + t['pnl']
             return t
 
-        for sym in pinned_stocks:
+        total_syms = len(pinned_stocks)
+        for _sym_idx, sym in enumerate(pinned_stocks):
+            if progress_cb:
+                try:
+                    progress_cb(done=_sym_idx, total=total_syms, current=sym)
+                except Exception:
+                    pass
             if sym not in symbol_map:
                 continue
             token = symbol_map[sym]['token']
@@ -4205,11 +4267,28 @@ def run_backtest():
     if not pinned:
         return jsonify({'status': 'error', 'msg': 'No pinned stocks to backtest'}), 400
 
-    symbol_map = get_symbol_map()
-    backtest = BacktestEngine(strategies_dict, trading_mode=mode)
-    results = backtest.run(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
+    existing = UserManager._backtest_engines.get(user_id)
+    if existing and existing._running:
+        return jsonify({'status': 'already_running'})
 
-    return jsonify({'status': 'ok', 'results': results})
+    symbol_map = get_symbol_map()
+    # Fire-and-poll instead of blocking this request — see BacktestEngine
+    # docstring for why: a wide date range can take well over nginx's
+    # default proxy_read_timeout and surface as a 504 even on success.
+    backtest = BacktestEngine(strategies_dict, trading_mode=mode)
+    UserManager._backtest_engines[user_id] = backtest
+    result = backtest.run_async(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
+    return jsonify(result)
+
+@app.route('/api/backtest/status')
+def backtest_status():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+    engine = UserManager._backtest_engines.get(user_id)
+    if not engine:
+        return jsonify({'status': 'idle'})
+    return jsonify(engine.progress)
 
 # ─── HELPER FOR SYMBOL MAP ──────────────────────────────────
 def get_symbol_map():
@@ -4965,6 +5044,7 @@ var _backtestToDate = '';
 var _backtestMode = CURRENT_MODE || 'INTRADAY';
 var _backtestRunning = false;
 var _backtestResults = null;
+var _backtestPollTimer = null;
 var _lastOrderCount=-1;
 var _prevIndices={};
 var ptTab='overview', ptData={};
@@ -5309,7 +5389,30 @@ function renderPTBacktest(el) {
     if (results) {
         _displayBacktestResults(results);
     }
-    
+
+    // Resync with the backend — a backtest kicked off before a tab switch
+    // (or before a page refresh) keeps running server-side; pick its
+    // status back up here instead of assuming nothing is happening.
+    fetch('/api/backtest/status').then(r=>r.json()).then(d=>{
+        var runBtn = document.getElementById('backtestRunBtn');
+        var status = document.getElementById('backtestStatus');
+        if (d.status === 'running') {
+            _backtestRunning = true;
+            if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
+            if (status) {
+                var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
+                status.innerHTML = '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running... ' + d.done + '/' + d.total + ' symbols (' + pct + '%) — ' + (d.current || '') + '</span>';
+            }
+            _pollBacktestStatus();
+        } else if (d.status === 'done' && d.results && !_backtestResults) {
+            _backtestResults = d.results;
+            if (status) status.innerHTML = '<span style="color:var(--green);">✅ Backtest completed</span>';
+            _displayBacktestResults(d.results);
+        } else if (d.status === 'error' && !_backtestResults) {
+            if (status) status.innerHTML = '<span style="color:var(--red);">❌ ' + (d.error || 'Backtest failed') + '</span>';
+        }
+    }).catch(()=>{});
+
     // Event listeners to remember values
     var walletInput = document.getElementById('backtestWallet');
     var fromInput = document.getElementById('backtestFromDate');
@@ -5380,9 +5483,13 @@ function runBacktest(){
     _backtestResults = null;
     _backtestMode = mode;
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
-    status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>';
+    status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Starting backtest...</span>';
     document.getElementById('backtestResults').style.display='none';
     
+    // The backend now runs this in a background thread and returns
+    // immediately (see /api/backtest/run) — we poll /api/backtest/status
+    // for progress instead of waiting on one long-lived request, which is
+    // what was tripping nginx's proxy_read_timeout into a 504.
     fetch('/api/backtest/run', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
@@ -5390,17 +5497,16 @@ function runBacktest(){
     })
     .then(r=>r.json())
     .then(d=>{
-        _backtestRunning = false;
-        if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
         if(d.status==='error'){
+            _backtestRunning = false;
+            if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
             status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
             _backtestResults = null;
             return;
         }
-        var res = d.results;
-        _backtestResults = res;
-        status.innerHTML='<span style="color:var(--green);">✅ Backtest completed</span>';
-        _displayBacktestResults(res);
+        // 'started' or 'already_running' — either way, start/resume polling
+        status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>';
+        _pollBacktestStatus();
     })
     .catch(e=>{
         _backtestRunning = false;
@@ -5408,6 +5514,35 @@ function runBacktest(){
         status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
         _backtestResults = null;
     });
+}
+
+function _pollBacktestStatus(){
+    if (_backtestPollTimer) { clearInterval(_backtestPollTimer); _backtestPollTimer = null; }
+    _backtestPollTimer = setInterval(function(){
+        fetch('/api/backtest/status').then(r=>r.json()).then(d=>{
+            var status = document.getElementById('backtestStatus');
+            var runBtn = document.getElementById('backtestRunBtn');
+            if (!status) { clearInterval(_backtestPollTimer); _backtestPollTimer = null; return; }
+            if (d.status === 'running') {
+                var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
+                status.innerHTML = '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running... ' + d.done + '/' + d.total + ' symbols (' + pct + '%) — ' + (d.current || '') + '</span>';
+            } else if (d.status === 'done') {
+                clearInterval(_backtestPollTimer); _backtestPollTimer = null;
+                _backtestRunning = false;
+                if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
+                _backtestResults = d.results;
+                status.innerHTML = '<span style="color:var(--green);">✅ Backtest completed</span>';
+                _displayBacktestResults(d.results);
+            } else if (d.status === 'error') {
+                clearInterval(_backtestPollTimer); _backtestPollTimer = null;
+                _backtestRunning = false;
+                if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '<i class="fas fa-play"></i> Run Backtest'; }
+                status.innerHTML = '<span style="color:var(--red);">❌ ' + (d.error || 'Backtest failed') + '</span>';
+            } else if (d.status === 'idle') {
+                clearInterval(_backtestPollTimer); _backtestPollTimer = null;
+            }
+        }).catch(()=>{});
+    }, 2000);
 }
 
 // ─── OVERVIEW ──────────────────────────────────────────────
