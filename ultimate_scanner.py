@@ -3623,8 +3623,18 @@ class BacktestEngine:
                     current_bar = df_slice.iloc[-1]
                     ltp = current_bar['close']
                     bar_time = current_bar['date'] if 'date' in current_bar else current_bar.get('date', datetime.now())
+                    try:
+                        bar_dt = bar_time if isinstance(bar_time, datetime) else pd.to_datetime(bar_time).to_pydatetime()
+                        bar_mins = bar_dt.hour * 60 + bar_dt.minute
+                    except Exception:
+                        bar_mins = 0
                     if sym in positions:
                         pos = positions[sym]
+                        # INTRADAY: force square-off by 15:15 — never hold a position overnight
+                        if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
+                            trades.append(self._close_trade(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time))
+                            del positions[sym]
+                            continue
                         if pos['side'] == 'BUY':
                             if ltp >= pos['target']:
                                 trades.append(self._close_trade(sym, pos, ltp, 'TARGET', bar_time))
@@ -3639,6 +3649,11 @@ class BacktestEngine:
                             elif ltp >= pos['stoploss']:
                                 trades.append(self._close_trade(sym, pos, ltp, 'STOP_LOSS', bar_time))
                                 del positions[sym]
+                        continue
+
+                    if self.trading_mode == 'INTRADAY' and (
+                        bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER or not _in_trade_slot(bar_mins)
+                    ):
                         continue
 
                     df_w = df_slice.iloc[-60:].reset_index(drop=True)
