@@ -441,14 +441,51 @@ class UserManager:
         cfg['strategy'] = strategy_name
         cls.save_user_config(user_id, cfg)
 
+    # Target/SL are configured per user, per trading mode (Intraday vs
+    # CNC/Delivery) — used by live paper trading (PaperTradingEngine) and by
+    # BacktestEngine, so both stop reading fixed class constants and instead
+    # read whatever the user set in Settings -> Target & Stop Loss.
+    DEFAULT_RISK_CONFIG = {
+        'target_pct_intraday': 1.0,     # percent, i.e. 1.0 = 1%
+        'stoploss_pct_intraday': 0.5,
+        'target_pct_delivery': 3.0,     # CNC/swing trades want more room
+        'stoploss_pct_delivery': 1.5,
+    }
+
+    @classmethod
+    def get_user_risk_config(cls, user_id):
+        cfg = cls.get_user_config(user_id)
+        rc = dict(cls.DEFAULT_RISK_CONFIG)
+        rc.update(cfg.get('risk_config', {}) or {})
+        return rc
+
+    @classmethod
+    def set_user_risk_config(cls, user_id, data):
+        rc = cls.get_user_risk_config(user_id)
+        for key in cls.DEFAULT_RISK_CONFIG:
+            if key in data and data[key] not in (None, ''):
+                try:
+                    v = float(data[key])
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key} must be a number")
+                if v <= 0 or v > 20:
+                    raise ValueError(f"{key} must be between 0 and 20 (percent)")
+                rc[key] = v
+        cfg = cls.get_user_config(user_id)
+        cfg['risk_config'] = rc
+        cls.save_user_config(user_id, cfg)
+        return rc
+
     @classmethod
     def get_paper_engine(cls, user_id):
         if user_id not in cls._paper_engines:
             config = Config(user_id)
             strategy_name, strategies_dict = cls.get_user_strategy(user_id)
             trading_mode = cls.get_user_mode(user_id)
+            risk_config = cls.get_user_risk_config(user_id)
             scanner = cls.get_scanner(user_id)
-            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner, trading_mode=trading_mode, strategy_name=strategy_name)
+            pe = PaperTradingEngine(config, strategies_dict, scanner=scanner, trading_mode=trading_mode,
+                                     strategy_name=strategy_name, risk_config=risk_config)
             cls._paper_engines[user_id] = pe
             pe.start(cls.get_kite(user_id))
         return cls._paper_engines[user_id]
@@ -1481,8 +1518,17 @@ class FullScanner:
 
 # ==================== PAPER TRADING ENGINE ====================
 class PaperTradingEngine:
+    # These four are only the *fallback defaults* shown in Settings the first
+    # time a user opens it — actual live values come from the per-user,
+    # per-mode risk config (see UserManager.get_user_risk_config /
+    # /api/user/update-risk) and are stored on the instance as
+    # self.target_pct / self.stoploss_pct / self.max_target_pct / self.max_sl_pct.
     TARGET_PCT = 0.010
     STOPLOSS_PCT = 0.005
+    TARGET_PCT_INTRADAY_DEFAULT_UI = 1.0     # percent, i.e. 1.0 = 1%
+    STOPLOSS_PCT_INTRADAY_DEFAULT_UI = 0.5
+    TARGET_PCT_DELIVERY_DEFAULT_UI = 3.0     # CNC/swing trades want more room
+    STOPLOSS_PCT_DELIVERY_DEFAULT_UI = 1.5
     INTRADAY_MARGIN_PCT = 0.20
     MAX_OPEN_POS = 1
     WALLET_USAGE_PCT = 0.70
@@ -1530,12 +1576,40 @@ class PaperTradingEngine:
     # (see _panels_enabled() / _check_signal() / _score_stock()).
     PANEL_GATE_STRATEGY = 'v4_high_trust'
     
-    def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY', strategy_name=None):
+    def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY', strategy_name=None, risk_config=None):
         self.config = config
         self.strategies_dict = strategies_dict
         self.scanner = scanner
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.strategy_name = strategy_name or self.PANEL_GATE_STRATEGY
+        # Target/SL are user-configurable per trading mode (see Settings ->
+        # Target & Stop Loss), not fixed constants. risk_config holds UI-scale
+        # percents (1.0 == 1%); convert to fractions and pick the pair that
+        # matches this engine's trading mode.
+        rc = risk_config or {}
+        if self.trading_mode == 'DELIVERY':
+            tgt_ui = rc.get('target_pct_delivery', self.TARGET_PCT_DELIVERY_DEFAULT_UI)
+            sl_ui = rc.get('stoploss_pct_delivery', self.STOPLOSS_PCT_DELIVERY_DEFAULT_UI)
+        else:
+            tgt_ui = rc.get('target_pct_intraday', self.TARGET_PCT_INTRADAY_DEFAULT_UI)
+            sl_ui = rc.get('stoploss_pct_intraday', self.STOPLOSS_PCT_INTRADAY_DEFAULT_UI)
+        try:
+            tgt_ui = float(tgt_ui)
+        except (TypeError, ValueError):
+            tgt_ui = self.TARGET_PCT_DELIVERY_DEFAULT_UI if self.trading_mode == 'DELIVERY' else self.TARGET_PCT_INTRADAY_DEFAULT_UI
+        try:
+            sl_ui = float(sl_ui)
+        except (TypeError, ValueError):
+            sl_ui = self.STOPLOSS_PCT_DELIVERY_DEFAULT_UI if self.trading_mode == 'DELIVERY' else self.STOPLOSS_PCT_INTRADAY_DEFAULT_UI
+        self.target_pct = max(0.0005, min(0.20, tgt_ui / 100.0))
+        self.stoploss_pct = max(0.0005, min(0.20, sl_ui / 100.0))
+        # Hard ceiling above the configured target/SL — keeps the ATR-scaled
+        # branch of _calculate_atr_targets from running away on volatile
+        # bars, sized proportionally to whatever the user configured instead
+        # of a fixed absolute number.
+        self.max_target_pct = round(self.target_pct * 1.5, 4)
+        self.max_sl_pct = round(self.stoploss_pct * 1.6, 4)
+        self.risk_config = rc
         self.PAPER_FILE = config.PAPER_FILE
         self.PAPER_BACKUP_DIR = config.PAPER_BACKUP_DIR
         os.makedirs(self.PAPER_BACKUP_DIR, exist_ok=True)
@@ -2142,6 +2216,9 @@ class PaperTradingEngine:
                 return round(ltp * (1 - self.SLIPPAGE_PCT), 2), self.SLIPPAGE_PCT * 100
 
     def _calculate_atr_targets(self, price, atr, side):
+        # target_pct / stoploss_pct / max_target_pct / max_sl_pct are set in
+        # __init__ from the user's Settings (per trading mode), not fixed
+        # constants — see UserManager.get_user_risk_config().
         atr_pct = (atr / price) * 100 if price > 0 else 1.0
         if atr_pct > 2.0:
             if side == 'BUY':
@@ -2151,35 +2228,38 @@ class PaperTradingEngine:
                 sl = round(price + atr * 1.0, 2)
                 tgt = round(price - atr * 1.5, 2)
         elif atr_pct < 0.5:
+            # Low-volatility bars: tighten proportionally to the user's
+            # configured target/SL (same 0.5x/0.6x ratio the old fixed
+            # 0.5%/0.3% values implied against the old fixed 1.0%/0.5%).
+            tight_tgt_pct = self.target_pct * 0.5
+            tight_sl_pct = self.stoploss_pct * 0.6
             if side == 'BUY':
-                tgt = round(price * 1.005, 2)
-                sl = round(price * 0.997, 2)
+                tgt = round(price * (1.0 + tight_tgt_pct), 2)
+                sl = round(price * (1.0 - tight_sl_pct), 2)
             else:
-                tgt = round(price * 0.995, 2)
-                sl = round(price * 1.003, 2)
+                tgt = round(price * (1.0 - tight_tgt_pct), 2)
+                sl = round(price * (1.0 + tight_sl_pct), 2)
         else:
             if side == 'BUY':
-                tgt = round(price * (1.0 + self.TARGET_PCT), 2)
-                sl = round(price * (1.0 - self.STOPLOSS_PCT), 2)
+                tgt = round(price * (1.0 + self.target_pct), 2)
+                sl = round(price * (1.0 - self.stoploss_pct), 2)
             else:
-                tgt = round(price * (1.0 - self.TARGET_PCT), 2)
-                sl = round(price * (1.0 + self.STOPLOSS_PCT), 2)
-        MAX_TARGET_PCT = 0.015
-        MAX_SL_PCT = 0.008
+                tgt = round(price * (1.0 - self.target_pct), 2)
+                sl = round(price * (1.0 + self.stoploss_pct), 2)
         if side == 'BUY':
-            tgt = min(tgt, round(price * (1.0 + MAX_TARGET_PCT), 2))
-            sl = max(sl, round(price * (1.0 - MAX_SL_PCT), 2))
+            tgt = min(tgt, round(price * (1.0 + self.max_target_pct), 2))
+            sl = max(sl, round(price * (1.0 - self.max_sl_pct), 2))
         else:
-            tgt = max(tgt, round(price * (1.0 - MAX_TARGET_PCT), 2))
-            sl = min(sl, round(price * (1.0 + MAX_SL_PCT), 2))
+            tgt = max(tgt, round(price * (1.0 - self.max_target_pct), 2))
+            sl = min(sl, round(price * (1.0 + self.max_sl_pct), 2))
         if side == 'BUY':
             if sl >= price or tgt <= price or tgt <= sl:
-                tgt = round(price * (1.0 + self.TARGET_PCT), 2)
-                sl = round(price * (1.0 - self.STOPLOSS_PCT), 2)
+                tgt = round(price * (1.0 + self.target_pct), 2)
+                sl = round(price * (1.0 - self.stoploss_pct), 2)
         else:
             if tgt >= price or sl <= price or tgt >= sl:
-                tgt = round(price * (1.0 - self.TARGET_PCT), 2)
-                sl = round(price * (1.0 + self.STOPLOSS_PCT), 2)
+                tgt = round(price * (1.0 - self.target_pct), 2)
+                sl = round(price * (1.0 + self.stoploss_pct), 2)
         return tgt, sl
     
     def _check_entry_quality(self, df, ind, side, symbol):
@@ -2378,11 +2458,11 @@ class PaperTradingEngine:
             target, stoploss = self._calculate_atr_targets(price, atr, side)
         else:
             if side == 'BUY':
-                target = round(price * (1 + self.TARGET_PCT), 2)
-                stoploss = round(price * (1 - self.STOPLOSS_PCT), 2)
+                target = round(price * (1 + self.target_pct), 2)
+                stoploss = round(price * (1 - self.stoploss_pct), 2)
             else:
-                target = round(price * (1 - self.TARGET_PCT), 2)
-                stoploss = round(price * (1 + self.STOPLOSS_PCT), 2)
+                target = round(price * (1 - self.target_pct), 2)
+                stoploss = round(price * (1 + self.stoploss_pct), 2)
         if side == 'BUY':
             target = max(target, price + self.MIN_ABSOLUTE_MOVE)
             stoploss = min(stoploss, price - self.MIN_ABSOLUTE_MOVE)
@@ -3463,8 +3543,8 @@ class PaperTradingEngine:
             'consecutive_losses': self.consecutive_losses,
             'order_count': len(orders),
             'latest_order': latest_order,
-            'target_pct': round(self.TARGET_PCT * 100, 2),
-            'sl_pct': round(self.STOPLOSS_PCT * 100, 2),
+            'target_pct': round(self.target_pct * 100, 2),
+            'sl_pct': round(self.stoploss_pct * 100, 2),
             'pinned_meta': dict(self.data.get('pinned_meta', {})),
         }
     
@@ -3776,10 +3856,22 @@ def detect_candle_patterns(df, i):
 
 # ==================== BACKTEST ENGINE ====================
 class BacktestEngine:
-    def __init__(self, strategies_dict, trading_mode='INTRADAY'):
+    def __init__(self, strategies_dict, trading_mode='INTRADAY', target_pct=None, stoploss_pct=None):
         self.strategies_dict = strategies_dict
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.results = None
+        # Target/SL come from the caller (UI-configured, per trading mode —
+        # see UserManager.get_user_risk_config / /api/backtest/run) rather
+        # than being fixed here. Fall back to sane per-mode defaults only if
+        # the caller didn't pass anything.
+        if target_pct is not None:
+            self.target_pct = float(target_pct)
+        else:
+            self.target_pct = 0.03 if self.trading_mode == 'DELIVERY' else 0.010
+        if stoploss_pct is not None:
+            self.stoploss_pct = float(stoploss_pct)
+        else:
+            self.stoploss_pct = 0.015 if self.trading_mode == 'DELIVERY' else 0.005
         # A backtest walks every 5-min bar in the date range and re-evaluates
         # the full strategy vote set on each one — for a multi-week range
         # across several pinned stocks this routinely takes well past a
@@ -3925,8 +4017,8 @@ class BacktestEngine:
                         if atr and atr > 0:
                             target, stoploss = self._calculate_atr_targets(price, atr, 'BUY')
                         else:
-                            target = price * 1.01
-                            stoploss = price * 0.995
+                            target = price * (1 + self.target_pct)
+                            stoploss = price * (1 - self.stoploss_pct)
                         margin_per_share = price * margin_pct
                         qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
                         if qty > 0:
@@ -3945,8 +4037,8 @@ class BacktestEngine:
                         if atr and atr > 0:
                             target, stoploss = self._calculate_atr_targets(price, atr, 'SELL')
                         else:
-                            target = price * 0.99
-                            stoploss = price * 1.005
+                            target = price * (1 - self.target_pct)
+                            stoploss = price * (1 + self.stoploss_pct)
                         margin_per_share = price * margin_pct
                         qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
                         if qty > 0:
@@ -3971,6 +4063,8 @@ class BacktestEngine:
             return {
                 'total_trades': 0, 'win_rate': 0, 'net_pnl': 0, 'trades': [],
                 'final_wallet': initial_wallet, 'mode': self.trading_mode,
+                'target_pct': round(self.target_pct * 100, 2),
+                'stoploss_pct': round(self.stoploss_pct * 100, 2),
             }
         wins = sum(1 for t in trades if t['pnl'] > 0)
         net_pnl = sum(t['pnl'] for t in trades)
@@ -3985,6 +4079,8 @@ class BacktestEngine:
             'final_wallet': round(final_wallet, 2),
             'trades': trades[-50:],
             'mode': self.trading_mode,
+            'target_pct': round(self.target_pct * 100, 2),
+            'stoploss_pct': round(self.stoploss_pct * 100, 2),
         }
 
     def _close_trade(self, sym, pos, exit_price, reason, exit_time=None):
@@ -4021,12 +4117,18 @@ class BacktestEngine:
         }
 
     def _calculate_atr_targets(self, price, atr, side):
+        # ATR multiples scale with the configured target/SL profile (base:
+        # 1.5x/1.0x ATR at the 1.0%/0.5% intraday defaults) so a wider CNC
+        # target also widens the ATR-driven target/SL, instead of a fixed
+        # multiplier that ignores what the user configured.
+        target_mult = 1.5 * (self.target_pct / 0.010)
+        sl_mult = 1.0 * (self.stoploss_pct / 0.005)
         if side == 'BUY':
-            target = price + atr * 1.5
-            stoploss = price - atr * 1.0
+            target = price + atr * target_mult
+            stoploss = price - atr * sl_mult
         else:
-            target = price - atr * 1.5
-            stoploss = price + atr * 1.0
+            target = price - atr * target_mult
+            stoploss = price + atr * sl_mult
         return round(target, 2), round(stoploss, 2)
 
 # ==================== FLASK APP ====================
@@ -4245,6 +4347,28 @@ def update_user_strategy():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
+@app.route('/api/user/update-risk', methods=['POST'])
+def update_user_risk():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+
+    data = request.json or {}
+    try:
+        rc = UserManager.set_user_risk_config(user_id, data)
+    except ValueError as e:
+        return jsonify({'status': 'error', 'msg': str(e)}), 400
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)}), 500
+
+    # Target/SL feed straight into position sizing math on the live engine —
+    # restart it (same as a mode/strategy change) so the new values take
+    # effect immediately instead of only on next process restart.
+    if user_id in UserManager._paper_engines:
+        UserManager._paper_engines[user_id].stop()
+        del UserManager._paper_engines[user_id]
+    return jsonify({'status': 'ok', 'msg': 'Target/Stop-Loss settings updated', 'risk_config': rc})
+
 @app.route('/api/backtest/run', methods=['POST'])
 def run_backtest():
     user_id = session.get('user_id')
@@ -4258,6 +4382,28 @@ def run_backtest():
     mode = data.get('mode') or UserManager.get_user_mode(user_id)
     if mode not in ('INTRADAY', 'DELIVERY'):
         mode = 'INTRADAY'
+
+    # Target/SL: use whatever the request sent (per-run override from the
+    # Backtest tab), falling back to the user's saved Settings for this mode.
+    risk_config = UserManager.get_user_risk_config(user_id)
+    if mode == 'DELIVERY':
+        default_tgt_ui = risk_config['target_pct_delivery']
+        default_sl_ui = risk_config['stoploss_pct_delivery']
+    else:
+        default_tgt_ui = risk_config['target_pct_intraday']
+        default_sl_ui = risk_config['stoploss_pct_intraday']
+    try:
+        target_pct_ui = float(data.get('target_pct')) if data.get('target_pct') not in (None, '') else default_tgt_ui
+    except (TypeError, ValueError):
+        target_pct_ui = default_tgt_ui
+    try:
+        stoploss_pct_ui = float(data.get('stoploss_pct')) if data.get('stoploss_pct') not in (None, '') else default_sl_ui
+    except (TypeError, ValueError):
+        stoploss_pct_ui = default_sl_ui
+    if not (0 < target_pct_ui <= 20):
+        target_pct_ui = default_tgt_ui
+    if not (0 < stoploss_pct_ui <= 20):
+        stoploss_pct_ui = default_sl_ui
 
     kite = UserManager.get_kite(user_id)
     pe = UserManager.get_paper_engine(user_id)
@@ -4275,7 +4421,8 @@ def run_backtest():
     # Fire-and-poll instead of blocking this request — see BacktestEngine
     # docstring for why: a wide date range can take well over nginx's
     # default proxy_read_timeout and surface as a 504 even on success.
-    backtest = BacktestEngine(strategies_dict, trading_mode=mode)
+    backtest = BacktestEngine(strategies_dict, trading_mode=mode,
+                               target_pct=target_pct_ui / 100.0, stoploss_pct=stoploss_pct_ui / 100.0)
     UserManager._backtest_engines[user_id] = backtest
     result = backtest.run_async(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
     return jsonify(result)
@@ -4332,6 +4479,7 @@ def index():
     strategy_names = list(AVAILABLE_STRATEGIES.keys())
     current_strategy = UserManager.get_user_strategy(user_id)[0]
     current_mode = UserManager.get_user_mode(user_id)
+    current_risk = UserManager.get_user_risk_config(user_id)
     return render_template_string(HTML,
         content=content,
         all_symbols=sorted(symbol_map.keys()),
@@ -4339,7 +4487,8 @@ def index():
         pinned_symbols=pe.data.get('pinned', []),
         available_strategies=strategy_names,
         current_strategy=current_strategy,
-        current_mode=current_mode
+        current_mode=current_mode,
+        current_risk=current_risk
     )
 
 @app.template_filter('fmt')
@@ -4825,13 +4974,14 @@ def gen_paper_tab(pe):
         '<button class="btn btn-gold" onclick="saveWallet()"><i class="fas fa-coins"></i> Set</button>'
         '</div></div>'
     )
+    mode_label = 'CNC/Delivery' if pe.trading_mode == 'DELIVERY' else 'Intraday'
     banner = (
         '<div class="pt-banner">'
         '<div style="font-size:20px;color:var(--gold);flex-shrink:0;padding-top:2px"><i class="fas fa-robot"></i></div>'
         '<div style="flex:1;min-width:0">'
         '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.7 — Fixed Backtest UI Persistence</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5">'
-        '70% wallet · ATR risk sizing (1%/trade) · Target +0.8% · SL -0.5% · SqOff 15:15 · '
+        '70% wallet · ATR risk sizing (1%/trade) · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · SqOff 15:15 · '
         'Trading Window: 9:15–14:00 ⭐⭐⭐⭐⭐ · '
         'Score≥35 · Vote≥50% · Layers≥2 · Vol≥1.3× · ST advisory · HTF advisory · '
         'DualConflict→Score≥42'
@@ -4987,6 +5137,8 @@ tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.018
 .scan-progress-bar{height:6px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;margin:8px 0}
 .scan-progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--blue),var(--gold));transition:width .4s}
 .scan-config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:10px}
+.rgrid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.rgrid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;align-items:end}
 @media(max-width:767px){
 .hamburger{display:flex}
 .sidebar{position:fixed;left:0;top:var(--topbar-h);bottom:0;z-index:160;width:240px;transform:translateX(-100%);box-shadow:4px 0 20px rgba(0,0,0,.5)}
@@ -4997,6 +5149,9 @@ tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.018
 .sg{grid-template-columns:repeat(2,1fr)}
 .tabs2{white-space:nowrap;flex-wrap:nowrap}
 .tab2{flex:0 0 auto;padding:6px 14px}
+}
+@media(max-width:480px){
+    .rgrid2, .rgrid4, .scan-config-grid, .rgrid4 > * { grid-template-columns:1fr !important; }
 }
 </style>
 </head>
@@ -5038,10 +5193,13 @@ var ALL_SYMS={{ all_symbols|tojson }};
 var AVAILABLE_STRATEGIES = {{ available_strategies|tojson }};
 var CURRENT_STRATEGY = {{ current_strategy|tojson }};
 var CURRENT_MODE = {{ current_mode|tojson }};
+var CURRENT_RISK = {{ current_risk|tojson }};
 var _backtestWallet = 100000;
 var _backtestFromDate = '';
 var _backtestToDate = '';
 var _backtestMode = CURRENT_MODE || 'INTRADAY';
+var _backtestTargetPct = null;
+var _backtestSlPct = null;
 var _backtestRunning = false;
 var _backtestResults = null;
 var _backtestPollTimer = null;
@@ -5152,17 +5310,23 @@ return '<div style="margin-top:6px;font-size:10px;font-family:Space Mono,monospa
 }
 
 function loadPTData(){
-fetch('/paper/summary').then(r=>r.json()).then(d=>{
-    if(_lastOrderCount>=0&&(d.order_count||0)>_lastOrderCount&&d.latest_order){
-    var o=d.latest_order;var isBuy=o.side==='BUY';var clr=isBuy?'#00e676':'#ff1744';
-    showOrderAlert((isBuy?'🟢 BUY':'🔴 SELL')+' ORDER — '+o.symbol,
-        'Qty: '+o.qty+'  ·  Price: ₹'+Number(o.price).toFixed(2)+'  ·  Value: ₹'+Number(o.value).toFixed(2)
-        +(o.total_charges?' · Charges: ₹'+Number(o.total_charges).toFixed(2):'')
-        +'  ·  Score: '+(o.signal_score||'—')+'<br><span style="color:#8b949e">'+o.time+'</span>',clr);
-    }
-    _lastOrderCount=d.order_count||0;
-    ptData=d;renderPTSummaryCards(d);renderPTTab(ptTab);
-}).catch(err=>console.error('[PT]',err));
+    fetch('/paper/summary').then(r=>r.json()).then(d=>{
+        if(_lastOrderCount>=0&&(d.order_count||0)>_lastOrderCount&&d.latest_order){
+            var o=d.latest_order;var isBuy=o.side==='BUY';var clr=isBuy?'#00e676':'#ff1744';
+            showOrderAlert((isBuy?'🟢 BUY':'🔴 SELL')+' ORDER — '+o.symbol,
+                'Qty: '+o.qty+'  ·  Price: ₹'+Number(o.price).toFixed(2)+'  ·  Value: ₹'+Number(o.value).toFixed(2)
+                +(o.total_charges?' · Charges: ₹'+Number(o.total_charges).toFixed(2):'')
+                +'  ·  Score: '+(o.signal_score||'—')+'<br><span style="color:#8b949e">'+o.time+'</span>',clr);
+        }
+        _lastOrderCount=d.order_count||0;
+        ptData=d;
+        renderPTSummaryCards(d);
+        // Only re-render the tab content if it is NOT the Settings tab
+        if (ptTab !== 'settings') {
+            renderPTTab(ptTab);
+        }
+        // If settings tab is active, do NOT re-render it – keep user input intact
+    }).catch(err=>console.error('[PT]',err));
 }
 
 function renderPTSummaryCards(d){
@@ -5211,11 +5375,47 @@ else if(tab==='settings')renderPTSettings(el);
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────
+function saveRiskConfig(){
+    var targetIntraday = document.getElementById('targetIntraday').value;
+    var slIntraday = document.getElementById('slIntraday').value;
+    var targetDelivery = document.getElementById('targetDelivery').value;
+    var slDelivery = document.getElementById('slDelivery').value;
+    var status = document.getElementById('riskStatus');
+    status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Saving...</span>';
+    var payload = {
+        target_pct_intraday: targetIntraday,
+        stoploss_pct_intraday: slIntraday,
+        target_pct_delivery: targetDelivery,
+        stoploss_pct_delivery: slDelivery
+    };
+    fetch('/api/user/update-risk', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status==='ok'){
+            status.innerHTML='<span style="color:var(--green);">✅ '+d.msg+'</span>';
+            showToast('✅ Target/Stop-Loss updated');
+            // Update CURRENT_RISK with new values
+            CURRENT_RISK = d.risk_config;
+            // Reload the page to reflect changes everywhere
+            setTimeout(()=>location.reload(), 1000);
+        } else {
+            status.innerHTML='<span style="color:var(--red);">❌ '+d.msg+'</span>';
+        }
+    })
+    .catch(e=>{
+        status.innerHTML='<span style="color:var(--red);">❌ Network error: '+e.message+'</span>';
+    });
+}
+
 function renderPTSettings(el){
     el.innerHTML=`
         <div style="padding:0;">
             <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">⚙️ Settings</h2>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div class="rgrid2">
                 <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
                     <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">📊 Strategy</h3>
                     <select id="strategySelect" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;margin-bottom:12px;">
@@ -5236,6 +5436,32 @@ function renderPTSettings(el){
                     </select>
                     <button class="btn btn-gold" onclick="saveMode()" style="width:100%;justify-content:center;padding:8px;"><i class="fas fa-save"></i> Save Trading Mode</button>
                     <div id="modeStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
+                </div>
+                <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                    <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">🎯 Target &amp; Stop Loss</h3>
+                    <p style="font-size:10px;color:var(--text3);margin-bottom:10px;line-height:1.5;">
+                        Used by live paper trading <b>and</b> Backtest. Set separately per mode — Intraday trades tight and fast, Delivery/CNC usually wants more room.
+                    </p>
+                    <div class="rgrid2" style="gap:10px;">
+                        <div>
+                            <label style="display:block;font-size:10px;color:var(--gold);margin-bottom:4px;">Intraday Target %</label>
+                            <input type="number" id="targetIntraday" value="${CURRENT_RISK.target_pct_intraday}" step="0.1" min="0.1" max="20" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:10px;color:var(--red);margin-bottom:4px;">Intraday Stop Loss %</label>
+                            <input type="number" id="slIntraday" value="${CURRENT_RISK.stoploss_pct_intraday}" step="0.1" min="0.1" max="20" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:10px;color:var(--gold);margin-bottom:4px;">Delivery/CNC Target %</label>
+                            <input type="number" id="targetDelivery" value="${CURRENT_RISK.target_pct_delivery}" step="0.1" min="0.1" max="20" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:10px;color:var(--red);margin-bottom:4px;">Delivery/CNC Stop Loss %</label>
+                            <input type="number" id="slDelivery" value="${CURRENT_RISK.stoploss_pct_delivery}" step="0.1" min="0.1" max="20" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                        </div>
+                    </div>
+                    <button class="btn btn-gold" onclick="saveRiskConfig()" style="width:100%;justify-content:center;padding:8px;margin-top:12px;"><i class="fas fa-save"></i> Save Target/Stop Loss</button>
+                    <div id="riskStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
                 </div>
                 <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
                     <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">🔑 API Keys</h3>
@@ -5338,16 +5564,17 @@ function renderPTBacktest(el) {
     var fromDate = _backtestFromDate || '';
     var toDate = _backtestToDate || '';
     var mode = _backtestMode || CURRENT_MODE || 'INTRADAY';
+    var targetPct = _backtestTargetPct !== null ? _backtestTargetPct : '';
+    var slPct = _backtestSlPct !== null ? _backtestSlPct : '';
     var running = _backtestRunning;
     var results = _backtestResults;
-    var statusMsg = running ? 'Running...' : (results ? 'Done' : '');
     
     var html = `
         <div style="padding:0;">
             <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">📈 Backtest</h2>
             <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">Test your selected strategy on pinned stocks over a custom date range.</p>
             <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end;">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;align-items:end;">
                     <div>
                         <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Initial Wallet (₹)</label>
                         <input type="number" id="backtestWallet" value="${wallet}" step="10000" min="1000" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
@@ -5367,6 +5594,14 @@ function renderPTBacktest(el) {
                             <option value="DELIVERY" ${mode==='DELIVERY'?'selected':''}>Delivery (CNC)</option>
                         </select>
                     </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Target % (override)</label>
+                        <input type="number" id="backtestTargetPct" value="${targetPct}" step="0.1" min="0.1" max="20" placeholder="Saved" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Stop Loss % (override)</label>
+                        <input type="number" id="backtestSlPct" value="${slPct}" step="0.1" min="0.1" max="20" placeholder="Saved" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
                 </div>
                 <button class="btn btn-p" onclick="runBacktest()" id="backtestRunBtn" style="width:100%;justify-content:center;padding:10px;margin-top:12px;" ${running?'disabled':''}>
                     <i class="fas fa-play"></i> ${running?'Running...':'Run Backtest'}
@@ -5378,21 +5613,18 @@ function renderPTBacktest(el) {
             </div>
             <div id="backtestResults" style="display:${results ? 'block' : 'none'};background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px;">
                 <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">Results</h3>
-                <div id="backtestStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;"></div>
+                <div id="backtestStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;"></div>
                 <div id="backtestTrades" style="overflow-x:auto;"></div>
             </div>
         </div>
     `;
     el.innerHTML = html;
     
-    // If results exist, populate them
     if (results) {
         _displayBacktestResults(results);
     }
 
-    // Resync with the backend — a backtest kicked off before a tab switch
-    // (or before a page refresh) keeps running server-side; pick its
-    // status back up here instead of assuming nothing is happening.
+    // Resync with backend
     fetch('/api/backtest/status').then(r=>r.json()).then(d=>{
         var runBtn = document.getElementById('backtestRunBtn');
         var status = document.getElementById('backtestStatus');
@@ -5414,23 +5646,24 @@ function renderPTBacktest(el) {
     }).catch(()=>{});
 
     // Event listeners to remember values
-    var walletInput = document.getElementById('backtestWallet');
-    var fromInput = document.getElementById('backtestFromDate');
-    var toInput = document.getElementById('backtestToDate');
-    var modeInput = document.getElementById('backtestMode');
-    if (walletInput) {
-        walletInput.addEventListener('change', function() { _backtestWallet = parseFloat(this.value) || 100000; });
-        walletInput.addEventListener('input', function() { _backtestWallet = parseFloat(this.value) || 100000; });
-    }
-    if (fromInput) {
-        fromInput.addEventListener('change', function() { _backtestFromDate = this.value; });
-    }
-    if (toInput) {
-        toInput.addEventListener('change', function() { _backtestToDate = this.value; });
-    }
-    if (modeInput) {
-        modeInput.addEventListener('change', function() { _backtestMode = this.value; });
-    }
+    ['backtestWallet','backtestFromDate','backtestToDate','backtestMode','backtestTargetPct','backtestSlPct'].forEach(id => {
+        var el2 = document.getElementById(id);
+        if (el2) {
+            el2.addEventListener('change', function() {
+                if (id === 'backtestWallet') _backtestWallet = parseFloat(this.value) || 100000;
+                else if (id === 'backtestFromDate') _backtestFromDate = this.value;
+                else if (id === 'backtestToDate') _backtestToDate = this.value;
+                else if (id === 'backtestMode') _backtestMode = this.value;
+                else if (id === 'backtestTargetPct') _backtestTargetPct = this.value ? parseFloat(this.value) : null;
+                else if (id === 'backtestSlPct') _backtestSlPct = this.value ? parseFloat(this.value) : null;
+            });
+            el2.addEventListener('input', function() {
+                if (id === 'backtestWallet') _backtestWallet = parseFloat(this.value) || 100000;
+                else if (id === 'backtestTargetPct') _backtestTargetPct = this.value ? parseFloat(this.value) : null;
+                else if (id === 'backtestSlPct') _backtestSlPct = this.value ? parseFloat(this.value) : null;
+            });
+        }
+    });
 }
 
 function _displayBacktestResults(res){
@@ -5469,6 +5702,8 @@ function runBacktest(){
     var fromDate = document.getElementById('backtestFromDate').value;
     var toDate = document.getElementById('backtestToDate').value;
     var mode = document.getElementById('backtestMode') ? document.getElementById('backtestMode').value : (CURRENT_MODE||'INTRADAY');
+    var targetPct = document.getElementById('backtestTargetPct').value;
+    var slPct = document.getElementById('backtestSlPct').value;
     var status = document.getElementById('backtestStatus');
     var runBtn = document.getElementById('backtestRunBtn');
     if (!fromDate || !toDate) {
@@ -5482,18 +5717,22 @@ function runBacktest(){
     _backtestRunning = true;
     _backtestResults = null;
     _backtestMode = mode;
+    if (targetPct !== '') _backtestTargetPct = parseFloat(targetPct);
+    else _backtestTargetPct = null;
+    if (slPct !== '') _backtestSlPct = parseFloat(slPct);
+    else _backtestSlPct = null;
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
     status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Starting backtest...</span>';
     document.getElementById('backtestResults').style.display='none';
     
-    // The backend now runs this in a background thread and returns
-    // immediately (see /api/backtest/run) — we poll /api/backtest/status
-    // for progress instead of waiting on one long-lived request, which is
-    // what was tripping nginx's proxy_read_timeout into a 504.
+    var payload = {wallet: wallet, from_date: fromDate, to_date: toDate, mode: mode};
+    if (_backtestTargetPct !== null) payload.target_pct = _backtestTargetPct;
+    if (_backtestSlPct !== null) payload.stoploss_pct = _backtestSlPct;
+    
     fetch('/api/backtest/run', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({wallet: wallet, from_date: fromDate, to_date: toDate, mode: mode})
+        body: JSON.stringify(payload)
     })
     .then(r=>r.json())
     .then(d=>{
@@ -5504,7 +5743,6 @@ function runBacktest(){
             _backtestResults = null;
             return;
         }
-        // 'started' or 'already_running' — either way, start/resume polling
         status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running backtest...</span>';
         _pollBacktestStatus();
     })
