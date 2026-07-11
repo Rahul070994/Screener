@@ -1263,3 +1263,76 @@ all_strategies = {
     'VOL_PROFILE_POC_BUY':     volume_profile_poc_buy,
     'VOL_PROFILE_POC_SELL':    volume_profile_poc_sell,
 }
+
+# ==================== STRATEGY METADATA ====================
+# Describes each strategy's trade direction, trust tier, and category so
+# that the main scanner (ultimate_scanner.py) never needs to hardcode a
+# strategy name or infer direction from keyword-matching on the name.
+# 'direction': 'BUY' | 'SELL' | 'BOTH' (BOTH = split vote, e.g. breakout
+#   strategies whose direction depends on which way price broke).
+# 'high_trust': strategies estimated >= ~85% intraday trust get a higher
+#   vote weight in scoring.
+# 'category': optional tag consumed by main-file features that need to
+#   treat a family of strategies specially (e.g. skipping breakout
+#   strategies in a RANGING market regime) without name-matching.
+strategy_meta = {
+    'BUY_SETUP':                {'direction': 'BUY'},
+    'SELL_SETUP':                {'direction': 'SELL'},
+
+    'RSI_OVERSOLD_BOUNCE':      {'direction': 'BUY'},
+    'RSI_OVERBOUGHT_REVERSAL':  {'direction': 'SELL'},
+
+    'MACD_BULLISH':              {'direction': 'BUY'},
+    'MACD_BEARISH':              {'direction': 'SELL'},
+    'MACD_FAST_BULL':            {'direction': 'BUY'},
+    'MACD_FAST_BEAR':            {'direction': 'SELL'},
+
+    'BB_BREAKOUT_BUY':           {'direction': 'BUY', 'category': 'breakout'},
+    'BB_BREAKOUT_SELL':          {'direction': 'SELL', 'category': 'breakout'},
+    'BB_SQUEEZE_BUY':            {'direction': 'BUY'},
+    'BB_SQUEEZE_SELL':           {'direction': 'SELL'},
+
+    'VOLUME_BREAKOUT':           {'direction': 'BOTH', 'high_trust': True, 'category': 'breakout'},
+    'INSTITUTIONAL_BUY':         {'direction': 'BUY', 'high_trust': True},
+    'INSTITUTIONAL_SELL':        {'direction': 'SELL', 'high_trust': True},
+
+    'ADX_TREND_BUY':             {'direction': 'BUY'},
+    'ADX_TREND_SELL':            {'direction': 'SELL'},
+
+    'EMA_CLUSTER_BUY':           {'direction': 'BUY', 'high_trust': True},
+    'EMA_CLUSTER_SELL':          {'direction': 'SELL', 'high_trust': True},
+
+    'SUPERTREND':                {'direction': 'BOTH'},
+
+    'VWAP_RECLAIM_BUY':          {'direction': 'BUY'},
+    'VWAP_REJECTION_SELL':       {'direction': 'SELL'},
+
+    'ORB_BREAKOUT_BUY':          {'direction': 'BUY', 'high_trust': True, 'category': 'breakout'},
+    'ORB_BREAKDOWN_SELL':        {'direction': 'SELL', 'high_trust': True},
+
+    'BULL_FLAG':                 {'direction': 'BUY'},
+    'BEAR_FLAG':                 {'direction': 'SELL'},
+
+    'LIQUIDITY_SWEEP_BUY':       {'direction': 'BUY', 'high_trust': True},
+    'LIQUIDITY_SWEEP_SELL':      {'direction': 'SELL', 'high_trust': True},
+
+    'ORDER_FLOW_BUY':            {'direction': 'BUY', 'high_trust': True},
+    'ORDER_FLOW_SELL':           {'direction': 'SELL', 'high_trust': True},
+
+    'ANCHORED_VWAP_BUY':         {'direction': 'BUY', 'high_trust': True},
+    'ANCHORED_VWAP_SELL':        {'direction': 'SELL', 'high_trust': True},
+
+    'VOL_PROFILE_POC_BUY':       {'direction': 'BUY', 'high_trust': True},
+    'VOL_PROFILE_POC_SELL':      {'direction': 'SELL', 'high_trust': True},
+}
+
+# --------------- MIN-BAR REQUIREMENT ---------------
+# Read generically by BacktestEngine.run() (ultimate_scanner.py) to decide
+# how many bars must accumulate in df_slice before it starts evaluating this
+# strategy set bar-by-bar. This set leans on EMA_100/EMA_50/EMA_34 trend
+# context, bb_width rolling means, 20-bar Donchian-style highs/lows, etc. —
+# genuinely long lookback — so it keeps the original 160-bar floor. Set
+# explicitly here (rather than relying on the scanner's fallback default)
+# so this number stays owned by the strategy file, matching the convention
+# in intraday_strategy.py.
+MIN_BARS_REQUIRED = 160

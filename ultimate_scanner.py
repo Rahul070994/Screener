@@ -1,11 +1,15 @@
-# ultimate_scanner.py  ─ v9.7  FIXED BACKTEST UI PERSISTENCE
+# ultimate_scanner.py  ─ v9.8  STRATEGY-AGNOSTIC SCORING
 # ============================================================
-# CHANGES in v9.7:
-#   • Backtest UI no longer resets on tab refresh.
-#   • Running status and results are preserved in global JS variables.
-#   • Progress spinner stays visible until API responds.
-#   • Results are shown even after switching tabs.
-# All other features remain unchanged.
+# CHANGES in v9.8:
+#   • Removed strategy-specific panel/gate scoring (v4_high_trust coupling)
+#   • Simplified scoring to be strategy-agnostic
+#   • All strategies now use native vote-based scoring
+#   • Removed PANEL_GATE_STRATEGY constant
+#   • Removed _panel_gates function and all references
+#   • Removed panels_enabled() method
+#   • Removed _null_gates() method
+#   • Simplified _check_signal() to use pure vote-based scoring
+#   • Simplified _score_stock() to use pure vote-based scoring
 # ============================================================
 
 from kiteconnect import KiteConnect
@@ -47,8 +51,27 @@ def decrypt_secret(cipher_text):
     return get_cipher().decrypt(cipher_text.encode()).decode()
 
 # ── Strategy Registry ──────────────────────────────────────
-import strategies
+import importlib.util
+import os
+import sys
+
+# Force-load strategies.py from the file, not a folder with the same name
+_strategies_file = os.path.join(os.path.dirname(__file__), 'strategies.py')
+if os.path.isfile(_strategies_file):
+    spec = importlib.util.spec_from_file_location("strategies_module", _strategies_file)
+    strategies = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(strategies)
+else:
+    # Fallback to normal import (if file is missing)
+    import strategies
+
 AVAILABLE_STRATEGIES = strategies.STRATEGY_REGISTRY
+# Flat {strategy_name: {'direction':..., 'high_trust':..., 'category':...}}
+# sourced entirely from the strategy modules themselves (see each module's
+# `strategy_meta`). The scanner never hardcodes a strategy name or infers
+# its direction/trust/category from name keywords — it just looks it up
+# here, so all strategy-specific knowledge stays in the strategies/ folder.
+AVAILABLE_STRATEGY_META = strategies.STRATEGY_META
 
 # ── Logging ──────────────────────────────────────────────
 def setup_logging():
@@ -58,7 +81,7 @@ def setup_logging():
     file_handler.setLevel(logging.INFO)
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(log_formatter)
-    console_handler.setLevel(logging.WARNING)
+    console_handler.setLevel(logging.DEBUG)
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logger.addHandler(file_handler)
@@ -217,24 +240,6 @@ NIFTY200_SYMBOLS = [
 ]
 _seen = set()
 NIFTY200_SYMBOLS = [s for s in NIFTY200_SYMBOLS if not (s in _seen or _seen.add(s))]
-
-BUY_KW = ['BUY','BULL','GOLDEN','MORNING','SOLDIERS','PIERCING','HAMMER',
-          'OVERSOLD','MOMENTUM',
-          'LIQUIDITY_SWEEP_BUY','ORDER_FLOW_BUY','ANCHORED_VWAP_BUY','VOL_PROFILE_POC_BUY']
-SELL_KW = ['SELL','BEAR','DEATH','EVENING','CROWS','CLOUD','OVERBOUGHT',
-           'REVERSAL','BREAKDOWN','RESISTANCE','SHOOTING_STAR',
-           'LIQUIDITY_SWEEP_SELL','ORDER_FLOW_SELL','ANCHORED_VWAP_SELL','VOL_PROFILE_POC_SELL']
-
-HIGH_TRUST_STRATEGIES = {
-    'LIQUIDITY_SWEEP_BUY', 'LIQUIDITY_SWEEP_SELL',
-    'ORDER_FLOW_BUY',      'ORDER_FLOW_SELL',
-    'ANCHORED_VWAP_BUY',   'ANCHORED_VWAP_SELL',
-    'VOL_PROFILE_POC_BUY', 'VOL_PROFILE_POC_SELL',
-    'EMA_CLUSTER_BUY',     'EMA_CLUSTER_SELL',
-    'ORB_BREAKOUT_BUY',    'ORB_BREAKDOWN_SELL',
-    'VOLUME_BREAKOUT',
-    'INSTITUTIONAL_BUY',   'INSTITUTIONAL_SELL',
-}
 
 TRADE_SLOTS = [
     (9*60+15,  14*60+0),
@@ -414,10 +419,10 @@ class UserManager:
         strategy_name = cfg.get('strategy')
         if strategy_name and strategy_name in AVAILABLE_STRATEGIES:
             return strategy_name, AVAILABLE_STRATEGIES[strategy_name]
-        default = list(AVAILABLE_STRATEGIES.keys())[0] if AVAILABLE_STRATEGIES else 'v4_high_trust'
-        if default not in AVAILABLE_STRATEGIES and AVAILABLE_STRATEGIES:
-            default = list(AVAILABLE_STRATEGIES.keys())[0]
-        return default, AVAILABLE_STRATEGIES.get(default, {})
+        if not AVAILABLE_STRATEGIES:
+            return None, {}
+        default = next(iter(AVAILABLE_STRATEGIES))
+        return default, AVAILABLE_STRATEGIES[default]
 
     @classmethod
     def get_user_mode(cls, user_id):
@@ -450,6 +455,7 @@ class UserManager:
         'stoploss_pct_intraday': 0.5,
         'target_pct_delivery': 3.0,     # CNC/swing trades want more room
         'stoploss_pct_delivery': 1.5,
+        'min_hold_days_delivery': 1,    # calendar days before CNC auto-exit allowed
     }
 
     @classmethod
@@ -463,14 +469,24 @@ class UserManager:
     def set_user_risk_config(cls, user_id, data):
         rc = cls.get_user_risk_config(user_id)
         for key in cls.DEFAULT_RISK_CONFIG:
-            if key in data and data[key] not in (None, ''):
+            if key not in data or data[key] in (None, ''):
+                continue
+            if key == 'min_hold_days_delivery':
                 try:
-                    v = float(data[key])
+                    iv = int(float(data[key]))
                 except (TypeError, ValueError):
-                    raise ValueError(f"{key} must be a number")
-                if v <= 0 or v > 20:
-                    raise ValueError(f"{key} must be between 0 and 20 (percent)")
-                rc[key] = v
+                    raise ValueError(f"{key} must be a whole number")
+                if iv < 0 or iv > 30:
+                    raise ValueError(f"{key} must be between 0 and 30 (days)")
+                rc[key] = iv
+                continue
+            try:
+                v = float(data[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be a number")
+            if v <= 0 or v > 20:
+                raise ValueError(f"{key} must be between 0 and 20 (percent)")
+            rc[key] = v
         cfg = cls.get_user_config(user_id)
         cfg['risk_config'] = rc
         cls.save_user_config(user_id, cfg)
@@ -816,7 +832,21 @@ class Indicators:
             return {}
 
 # ==================== STRATEGY VOTING ====================
-def _strat_votes(df_slice, ind_slice, strategies_dict):
+_STRAT_PERF_MIN_TRADES = 10
+
+def _strategy_perf_weight(name, strategy_performance):
+    if not strategy_performance:
+        return 1.0
+    sp = strategy_performance.get(name)
+    if not sp:
+        return 1.0
+    total = sp.get('total_trades', 0)
+    if total < _STRAT_PERF_MIN_TRADES:
+        return 1.0
+    win_rate = sp.get('win_rate', 0.5)
+    return max(0.4, min(1.3, 0.4 + win_rate * 1.2))
+
+def _strat_votes(df_slice, ind_slice, strategies_dict, strategy_performance=None):
     b = 0.0
     s = 0.0
     total = 0
@@ -825,13 +855,13 @@ def _strat_votes(df_slice, ind_slice, strategies_dict):
             try:
                 if func(df_slice, ind_slice):
                     total += 1
-                    u = name.upper()
-                    is_sell = any(k in u for k in SELL_KW)
-                    is_buy = any(k in u for k in BUY_KW) if not is_sell else False
-                    pts = 5.0 if name in HIGH_TRUST_STRATEGIES else 3.0
-                    if is_sell:
+                    meta = AVAILABLE_STRATEGY_META.get(name, {})
+                    direction = meta.get('direction', 'BOTH')
+                    pts = 5.0 if meta.get('high_trust') else 3.0
+                    pts *= _strategy_perf_weight(name, strategy_performance)
+                    if direction == 'SELL':
                         s += pts
-                    elif is_buy:
+                    elif direction == 'BUY':
                         b += pts
                     else:
                         b += 0.5
@@ -842,275 +872,91 @@ def _strat_votes(df_slice, ind_slice, strategies_dict):
         logger.error(f"Strat votes error: {e}")
     return b, s, total
 
-# ==================== PANEL GATES ====================
-def _panel_gates(ind, i):
-    g = {k: False for k in ['p1_buy','p1_sell','p2_buy','p2_sell','p3_buy','p3_sell',
-                            'p4_buy','p4_sell','p5_buy','p5_sell','p6_buy','p6_sell',
-                            'p7_buy','p7_sell','p8_ok','p9_ok','p10_buy','p10_sell']}
-    g['buy_bonus'] = 0.0
-    g['sell_bonus'] = 0.0
-    if i < 6:
-        return g
-    
-    def fv(key, fb=0.0):
-        try:
-            v = float(ind[key].iloc[i])
-            return fb if np.isnan(v) else v
-        except:
-            return fb
-    
-    def fv_p(key, n=1, fb=0.0):
-        try:
-            v = float(ind[key].iloc[i-n])
-            return fb if np.isnan(v) else v
-        except:
-            return fb
-    
-    try:
-        close = fv('close')
-        open_ = fv('open')
-        high = fv('high')
-        low_ = fv('low')
-        ema9 = fv('ema_9')
-        ema21 = fv('ema_21')
-        ema50 = fv('ema_50')
-        ema200 = fv('ema_200')
-        ema9_sl = fv('ema9_slope')
-        ema21_sl = fv('ema21_slope')
-        e200_sl = fv('ema200_slope')
-        vwap = fv('vwap')
-        atr = fv('atr')
-        atr_pct = fv('atr_percent')
-        rsi = fv('rsi', 50)
-        rsi7 = fv('rsi7', 50)
-        rsi21 = fv('rsi21', 50)
-        rsi_p1 = fv_p('rsi', 1, 50)
-        rsi_p2 = fv_p('rsi', 2, 50)
-        rsi_p3 = fv_p('rsi', 3, 50)
-        macd = fv('macd')
-        macds = fv('macd_signal')
-        mhist = fv('macd_hist')
-        mhist_p1 = fv_p('macd_hist', 1)
-        mhist_p2 = fv_p('macd_hist', 2)
-        macd_p1 = fv_p('macd', 1)
-        macds_p1 = fv_p('macd_signal', 1)
-        vol = fv('volume')
-        vol_ma20 = fv('vol_ma20', vol)
-        vol_r20 = fv('vol_ratio_20', 1.0)
-        vol_r50 = fv('vol_ratio_50', 1.0)
-        vol_z = fv('vol_zscore', 0.0)
-        obv = fv('obv')
-        obv_ma = fv('obv_ma', obv)
-        obv_sl = fv('obv_slope')
-        cmf = fv('cmf')
-        adx = fv('adx', 0)
-        pdi = fv('plus_di', 0)
-        ndi = fv('minus_di', 0)
-        st_dir = fv('supertrend_dir', 0)
-        st_dir_p1 = fv_p('supertrend_dir', 1, 0)
-        psar_bull = fv('psar_bull', 0.5)
-        tenkan = fv('ichi_tenkan', close)
-        kijun = fv('ichi_kijun', close)
-        spanA = fv('ichi_spanA', close)
-        spanB = fv('ichi_spanB', close)
-        dc_u = fv('dc_upper', high)
-        dc_l = fv('dc_lower', low_)
-        roc10 = fv('roc10')
-        roc5 = fv('roc5')
-        htf_bull = fv('htf_bull', 0.5)
-        body_r = fv('body_ratio', 0.5)
-        uw_r = fv('upper_wick_ratio', 0.2)
-        lw_r = fv('lower_wick_ratio', 0.2)
-        vwap_u1 = fv('vwap_upper1', close * 1.01)
-        vwap_l1 = fv('vwap_lower1', close * 0.99)
-        bb_upper = fv('bb_upper')
-        bb_lower = fv('bb_lower')
-        kc_upper = fv('kc_upper')
-        kc_lower = fv('kc_lower')
-        
-        cloud_top = max(spanA, spanB)
-        cloud_bot = min(spanA, spanB)
-        in_cloud = cloud_bot <= close <= cloud_top
-        bull_c = close > open_
-        bear_c = close < open_
-        
-        ema_stack_bull = (ema9 > ema21 > ema50 > ema200 and 
-                          (ema9 - ema200) / ema200 > 0.02)
-        ema_stack_bear = (ema9 < ema21 < ema50 < ema200 and 
-                          (ema200 - ema9) / ema200 > 0.02)
-        ema_slope_bull = ema9_sl > 0.5 and ema21_sl > 0.3 and e200_sl > 0.1
-        ema_slope_bear = ema9_sl < -0.5 and ema21_sl < -0.3 and e200_sl < -0.1
-        above_vwap = close > vwap
-        below_vwap = close < vwap
-        
-        g['p1_buy'] = ema_stack_bull and above_vwap and not in_cloud and ema_slope_bull
-        g['p1_sell'] = ema_stack_bear and below_vwap and not in_cloud and ema_slope_bear
-        
-        if ema_stack_bull and ema_slope_bull:
-            g['buy_bonus'] += 5.0
-        elif ema_stack_bull:
-            g['buy_bonus'] += 3.0
-        if ema_stack_bear and ema_slope_bear:
-            g['sell_bonus'] += 5.0
-        elif ema_stack_bear:
-            g['sell_bonus'] += 3.0
-        if above_vwap and close < vwap_u1:
-            g['buy_bonus'] += 2.0
-        if htf_bull >= 0.8:
-            g['buy_bonus'] += 4.0
-        elif htf_bull <= 0.2:
-            g['sell_bonus'] += 4.0
-        if below_vwap and close > vwap_l1:
-            g['sell_bonus'] += 2.0
-        if adx < 25:
-            g['buy_bonus'] -= 5.0
-            g['sell_bonus'] -= 5.0
-        
-        tk_cross_bull = (tenkan > kijun and 
-                         fv_p('ichi_tenkan', 1, close) <= fv_p('ichi_kijun', 1, close))
-        tk_cross_bear = (tenkan < kijun and 
-                         fv_p('ichi_tenkan', 1, close) >= fv_p('ichi_kijun', 1, close))
-        above_cloud_strong = close > cloud_top and tenkan > kijun and not in_cloud
-        below_cloud_strong = close < cloud_bot and tenkan < kijun and not in_cloud
-        g['p2_buy'] = above_cloud_strong
-        g['p2_sell'] = below_cloud_strong
-        if tk_cross_bull:
-            g['buy_bonus'] += 4.0
-        if tk_cross_bear:
-            g['sell_bonus'] += 4.0
-        if above_cloud_strong:
-            g['buy_bonus'] += 3.0
-        if below_cloud_strong:
-            g['sell_bonus'] += 3.0
-        
-        rsi_bull = rsi7 > rsi > rsi21 and rsi > 50 and rsi < 65
-        rsi_bear = rsi7 < rsi < rsi21 and rsi < 50 and rsi > 35
-        rsi_rise3 = rsi > rsi_p1 > rsi_p2 > rsi_p3 and rsi - rsi_p3 > 5
-        rsi_fall3 = rsi < rsi_p1 < rsi_p2 < rsi_p3 and rsi_p3 - rsi > 5
-        rsi_oversold = rsi < 30 and rsi7 < 30
-        rsi_overbought = rsi > 70 and rsi7 > 70
-        g['p3_buy'] = (rsi_bull or rsi_rise3 or rsi_oversold) and not rsi_overbought
-        g['p3_sell'] = (rsi_bear or rsi_fall3 or rsi_overbought) and not rsi_oversold
-        if rsi_oversold:
-            g['buy_bonus'] += 4.0
-        elif rsi < 40:
-            g['buy_bonus'] += 2.0
-        if rsi_overbought:
-            g['sell_bonus'] += 4.0
-        elif rsi > 60:
-            g['sell_bonus'] += 2.0
-        if rsi_rise3:
-            g['buy_bonus'] += 3.0
-        if rsi_fall3:
-            g['sell_bonus'] += 3.0
-        
-        macd_cross_up = (macd > macds and macd_p1 <= macds_p1 and mhist > mhist_p1)
-        macd_cross_down = (macd < macds and macd_p1 >= macds_p1 and mhist < mhist_p1)
-        hist_bull_3 = mhist > mhist_p1 > mhist_p2
-        hist_bear_3 = mhist < mhist_p1 < mhist_p2
-        g['p4_buy'] = macd_cross_up or (hist_bull_3 and macd > 0)
-        g['p4_sell'] = macd_cross_down or (hist_bear_3 and macd < 0)
-        if macd_cross_up:
-            g['buy_bonus'] += 5.0
-        if macd_cross_down:
-            g['sell_bonus'] += 5.0
-        if hist_bull_3:
-            g['buy_bonus'] += 3.0
-        if hist_bear_3:
-            g['sell_bonus'] += 3.0
-        
-        high_vol = vol_r20 >= 2.0 and vol_r50 >= 1.5
-        vol_z_strong = vol_z >= 2.0
-        cmf_bull = cmf > 0.15
-        cmf_bear = cmf < -0.15
-        obv_up = obv > obv_ma and obv_sl > 5
-        obv_dn = obv < obv_ma and obv_sl < -5
-        g['p5_buy'] = (high_vol or vol_z_strong) and cmf_bull and obv_up and bull_c
-        g['p5_sell'] = (high_vol or vol_z_strong) and cmf_bear and obv_dn and bear_c
-        if high_vol and bull_c:
-            g['buy_bonus'] += 4.0
-        elif vol_z_strong and bull_c:
-            g['buy_bonus'] += 3.0
-        if high_vol and bear_c:
-            g['sell_bonus'] += 4.0
-        elif vol_z_strong and bear_c:
-            g['sell_bonus'] += 3.0
-        
-        g['p6_buy'] = st_dir == 1
-        g['p6_sell'] = st_dir == -1
-        st_flip_bull = st_dir == 1 and st_dir_p1 == -1
-        st_flip_bear = st_dir == -1 and st_dir_p1 == 1
-        if st_flip_bull:
-            g['buy_bonus'] += 6.0
-        if st_flip_bear:
-            g['sell_bonus'] += 6.0
-        
-        g['p7_buy'] = psar_bull >= 0.5
-        g['p7_sell'] = psar_bull <= 0.5
-        psar_flip_bull = psar_bull >= 0.8 and fv_p('psar_bull', 1, 0.5) < 0.5
-        psar_flip_bear = psar_bull <= 0.2 and fv_p('psar_bull', 1, 0.5) > 0.5
-        if psar_flip_bull:
-            g['buy_bonus'] += 4.0
-        if psar_flip_bear:
-            g['sell_bonus'] += 4.0
-        
-        try:
-            _cp_df = pd.DataFrame({
-                'open':  ind['open'].iloc[:i+1].values,
-                'high':  ind['high'].iloc[:i+1].values,
-                'low':   ind['low'].iloc[:i+1].values,
-                'close': ind['close'].iloc[:i+1].values,
-            })
-            cp, cp_buy, cp_sell = detect_candle_patterns(_cp_df, min(i, len(_cp_df) - 1))
-        except Exception as _e:
-            logger.debug(f"Panel 8 candle pattern error: {_e}")
-            cp, cp_buy, cp_sell = {}, 0.0, 0.0
+def _get_strategy_min_bars(strategies_dict, fallback=160):
+    seen_modules = set()
+    best = None
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'MIN_BARS_REQUIRED', None)
+        if val is not None:
+            best = val if best is None else max(best, val)
+    return best if best is not None else fallback
 
-        is_indecision = cp.get('DOJI', False) or cp.get('SPINNING_TOP', False)
-        g['p8_ok'] = not is_indecision
-        g['buy_bonus'] += cp_buy
-        g['sell_bonus'] += cp_sell
-        g['candle_veto_buy'] = any(cp.get(p) for p in [
-            'SHOOTING_STAR', 'EVENING_STAR', 'BEAR_ENGULFING',
-            'DARK_CLOUD_COVER', 'THREE_BLACK_CROWS', 'HANGING_MAN'])
-        g['candle_veto_sell'] = any(cp.get(p) for p in [
-            'HAMMER', 'MORNING_STAR', 'BULL_ENGULFING',
-            'PIERCING_LINE', 'THREE_WHITE_SOLDIERS', 'INVERTED_HAMMER'])
-        
-        atr_ideal = 0.8 <= atr_pct <= 2.5
-        atr_too_low = atr_pct < 0.5
-        atr_too_high = atr_pct > 4.0
-        g['p9_ok'] = atr_ideal
-        if atr_ideal:
-            g['buy_bonus'] += 2.0
-            g['sell_bonus'] += 2.0
-        if atr_too_low:
-            g['buy_bonus'] -= 5.0
-            g['sell_bonus'] -= 5.0
-        if atr_too_high:
-            g['buy_bonus'] -= 3.0
-            g['sell_bonus'] -= 3.0
-        
-        dc_breakout_up = close > dc_u * 0.995 and bull_c and vol_r20 > 1.5
-        dc_breakout_down = close < dc_l * 1.005 and bear_c and vol_r20 > 1.5
-        roc_bull = roc5 > 1.0 and roc10 > 1.5
-        roc_bear = roc5 < -1.0 and roc10 < -1.5
-        g['p10_buy'] = dc_breakout_up or roc_bull
-        g['p10_sell'] = dc_breakout_down or roc_bear
-        if dc_breakout_up:
-            g['buy_bonus'] += 4.0
-        if dc_breakout_down:
-            g['sell_bonus'] += 4.0
-        if roc_bull:
-            g['buy_bonus'] += 3.0
-        if roc_bear:
-            g['sell_bonus'] += 3.0
-            
+# ==================== CANDLE PATTERN ENGINE ====================
+def detect_candle_patterns(df, i):
+    patterns = {}
+    buy_bonus = 0.0
+    sell_bonus = 0.0
+    try:
+        c = float(df['close'].iloc[i])
+        o = float(df['open'].iloc[i])
+        h = float(df['high'].iloc[i])
+        l = float(df['low'].iloc[i])
+        body = abs(c - o)
+        rng = (h - l) if (h - l) > 0 else 1e-9
+        body_r = body / rng
+        uw_r = (h - max(c, o)) / rng
+        lw_r = (min(c, o) - l) / rng
+        bull = c > o
+        bear = c < o
+        patterns['DOJI'] = body_r < 0.10
+        patterns['SPINNING_TOP'] = 0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25
+        patterns['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
+        patterns['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
+        patterns['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
+        patterns['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
+        patterns['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
+        patterns['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
+        patterns['STRONG_BULL_BODY'] = (body_r > 0.65 and bull and uw_r < 0.20)
+        patterns['STRONG_BEAR_BODY'] = (body_r > 0.65 and bear and lw_r < 0.20)
+        if i >= 1:
+            pc = float(df['close'].iloc[i-1])
+            po = float(df['open'].iloc[i-1])
+            ph = float(df['high'].iloc[i-1])
+            pl = float(df['low'].iloc[i-1])
+            pbull = pc > po
+            pbear = pc < po
+            prev_body = abs(pc - po)
+            patterns['BULL_ENGULFING'] = (pbear and bull and o < pc and c > po and body > prev_body * 1.0)
+            patterns['BEAR_ENGULFING'] = (pbull and bear and o > pc and c < po and body > prev_body * 1.0)
+            prev_mid = (po + pc) / 2
+            patterns['PIERCING_LINE'] = (pbear and bull and o < pl and c > prev_mid and c < po)
+            patterns['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < prev_mid and c > pc)
+            patterns['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
+            patterns['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
+        if i >= 2:
+            c2 = float(df['close'].iloc[i-2])
+            o2 = float(df['open'].iloc[i-2])
+            c1 = float(df['close'].iloc[i-1])
+            o1 = float(df['open'].iloc[i-1])
+            body1 = abs(c1 - o1)
+            rng1 = (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) if (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) > 0 else 1e-9
+            mid1_body = body1 / rng1
+            bar2_mid = (o2 + c2) / 2
+            patterns['MORNING_STAR'] = (c2 < o2 and mid1_body < 0.30 and bull and c > bar2_mid)
+            patterns['EVENING_STAR'] = (c2 > o2 and mid1_body < 0.30 and bear and c < bar2_mid)
+            patterns['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
+            patterns['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
+        for p in ['HAMMER','INVERTED_HAMMER','BULL_ENGULFING','PIERCING_LINE','MORNING_STAR','THREE_WHITE_SOLDIERS','TWEEZER_BOTTOM','BULL_MARUBOZU']:
+            if patterns.get(p):
+                pts = {'BULL_ENGULFING':6,'MORNING_STAR':7,'THREE_WHITE_SOLDIERS':6,'BULL_MARUBOZU':5,'HAMMER':5,'PIERCING_LINE':4,'TWEEZER_BOTTOM':4,'INVERTED_HAMMER':3}
+                buy_bonus += pts.get(p, 3)
+        for p in ['SHOOTING_STAR','HANGING_MAN','BEAR_ENGULFING','DARK_CLOUD_COVER','EVENING_STAR','THREE_BLACK_CROWS','TWEEZER_TOP','BEAR_MARUBOZU']:
+            if patterns.get(p):
+                pts = {'BEAR_ENGULFING':6,'EVENING_STAR':7,'THREE_BLACK_CROWS':6,'BEAR_MARUBOZU':5,'SHOOTING_STAR':5,'DARK_CLOUD_COVER':4,'TWEEZER_TOP':4,'HANGING_MAN':3}
+                sell_bonus += pts.get(p, 3)
+        if patterns.get('DOJI') or patterns.get('SPINNING_TOP'):
+            buy_bonus -= 8.0
+            sell_bonus -= 8.0
     except Exception as e:
-        logger.error(f"Panel gates error: {e}")
-        traceback.print_exc()
-    
-    return g
+        logger.debug(f"Candle pattern error: {e}")
+    return patterns, buy_bonus, sell_bonus
 
 # ==================== FULL SCANNER ENGINE ====================
 class FullScanner:
@@ -1183,100 +1029,73 @@ class FullScanner:
         threshold = float(min_score) if min_score is not None else self.MIN_SCORE
         sym = sym_info["symbol"]
         token = sym_info["token"]
- 
+
         try:
             end = scan_end or datetime.now()
             start5 = scan_start5 or (end - timedelta(days=7))
             start15_dt = scan_start15 or (end - timedelta(days=14))
- 
+
+            min_bars_needed = _get_strategy_min_bars(paper_engine.strategies_dict)
+
             _hist_limiter.wait(f"5min {sym}")
             data5 = kite.historical_data(token, start5, end, "5minute")
-            if not data5 or len(data5) < 80:
+            if not data5 or len(data5) < min_bars_needed:
                 return None
- 
+
             df5 = pd.DataFrame(data5)
             ltp = float(df5["close"].iloc[-1])
             if ltp < self.MIN_PRICE:
                 return None
- 
+
             avg_vol = float(df5["volume"].iloc[-20:].mean())
             if avg_vol < 10000:
                 return None
- 
+
             ind5 = Indicators.calculate_all(df5)
-            i5 = len(df5) - 1
-            panels_on = paper_engine.panels_enabled()
-            g5 = _panel_gates(ind5, i5) if panels_on else paper_engine._null_gates()
- 
-            df5_w = df5.iloc[-60:].reset_index(drop=True)
-            ind5_w = ind5.iloc[-60:].reset_index(drop=True)
-            strat5_b, strat5_s, _ = _strat_votes(df5_w, ind5_w, paper_engine.strategies_dict)
+            df5_w = df5.iloc[-min_bars_needed:].reset_index(drop=True)
+            ind5_w = ind5.iloc[-min_bars_needed:].reset_index(drop=True)
+
+            strat5_b, strat5_s, _ = _strat_votes(df5_w, ind5_w, paper_engine.strategies_dict, paper_engine.strategy_performance)
             tot5 = strat5_b + strat5_s
             buy5_pct = strat5_b / tot5 * 100 if tot5 > 0 else 50.0
             sel5_pct = strat5_s / tot5 * 100 if tot5 > 0 else 50.0
-            soft5_b = sum([g5.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
-            soft5_s = sum([g5.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-            if panels_on:
-                # Full panel/gate scoring — calibrated for v4_high_trust only.
-                buy5_score = soft5_b * 15.0 + g5.get("buy_bonus", 0) + buy5_pct * 0.2
-                sell5_score = soft5_s * 15.0 + g5.get("sell_bonus", 0) + sel5_pct * 0.2
-                if not g5.get("p8_ok", True):
-                    buy5_score -= 15.0
-                    sell5_score -= 15.0
-                if not g5.get("p9_ok", True):
-                    buy5_score -= 10.0
-                    sell5_score -= 10.0
-            else:
-                # Native scoring for any other strategy — score is purely that
-                # strategy's own 5-min vote strength (0-100%), no panel bonuses
-                # or vetoes borrowed from v4_high_trust.
-                buy5_score = buy5_pct
-                sell5_score = sel5_pct
- 
+
             _hist_limiter.wait(f"15min {sym}")
             data15 = kite.historical_data(token, start15_dt, end, "15minute")
- 
+
             htf_buy_score = htf_sell_score = 0.0
             htf_adx = 0.0
             htf_rsi = 50.0
             htf_align = False
- 
-            if data15 and len(data15) >= 40:
+
+            if data15 and len(data15) >= min_bars_needed:
                 df15 = pd.DataFrame(data15)
                 ind15 = Indicators.calculate_all(df15)
-                i15 = len(df15) - 1
-                df15_w = df15.iloc[-40:].reset_index(drop=True)
-                ind15_w = ind15.iloc[-40:].reset_index(drop=True)
-                htf_strat_b, htf_strat_s, _ = _strat_votes(df15_w, ind15_w, paper_engine.strategies_dict)
+                df15_w = df15.iloc[-min_bars_needed:].reset_index(drop=True)
+                ind15_w = ind15.iloc[-min_bars_needed:].reset_index(drop=True)
+                htf_strat_b, htf_strat_s, _ = _strat_votes(df15_w, ind15_w, paper_engine.strategies_dict, paper_engine.strategy_performance)
                 tot15 = htf_strat_b + htf_strat_s
                 buy15_pct = htf_strat_b / tot15 * 100 if tot15 > 0 else 50.0
                 sel15_pct = htf_strat_s / tot15 * 100 if tot15 > 0 else 50.0
-                if panels_on:
-                    g15 = _panel_gates(ind15, i15)
-                    soft15_b = sum([g15.get(f"p{p}_buy", False) for p in [1,2,3,4,5,10]])
-                    soft15_s = sum([g15.get(f"p{p}_sell", False) for p in [1,2,3,4,5,10]])
-                    htf_buy_score = soft15_b * 12.0 + g15.get("buy_bonus", 0) + buy15_pct * 0.15
-                    htf_sell_score = soft15_s * 12.0 + g15.get("sell_bonus", 0) + sel15_pct * 0.15
-                else:
-                    htf_buy_score = buy15_pct
-                    htf_sell_score = sel15_pct
+                htf_buy_score = buy15_pct
+                htf_sell_score = sel15_pct
                 raw = float(ind15["adx"].iloc[-1]) if "adx" in ind15.columns else 0
                 htf_adx = 0 if np.isnan(raw) else raw
                 raw = float(ind15["rsi"].iloc[-1]) if "rsi" in ind15.columns else 50
                 htf_rsi = 50 if np.isnan(raw) else raw
-                dir5 = "BUY" if buy5_score >= sell5_score else "SELL"
+                dir5 = "BUY" if buy5_pct >= sel5_pct else "SELL"
                 dir15 = "BUY" if htf_buy_score >= htf_sell_score else "SELL"
                 htf_align = (dir5 == dir15)
             else:
-                htf_buy_score = buy5_score * 0.5
-                htf_sell_score = sell5_score * 0.5
- 
-            buy_score = buy5_score * 0.6 + htf_buy_score * 0.4
-            sell_score = sell5_score * 0.6 + htf_sell_score * 0.4
+                htf_buy_score = buy5_pct * 0.5
+                htf_sell_score = sel5_pct * 0.5
+
+            buy_score = buy5_pct * 0.6 + htf_buy_score * 0.4
+            sell_score = sel5_pct * 0.6 + htf_sell_score * 0.4
             best_score = max(buy_score, sell_score)
             direction = "BUY" if buy_score >= sell_score else "SELL"
             align_bonus = 12.0 if htf_align else -5.0
- 
+
             triggered = []
             for name, func in paper_engine.strategies_dict.items():
                 try:
@@ -1284,39 +1103,39 @@ class FullScanner:
                         triggered.append(name)
                 except Exception:
                     pass
- 
+
             adx_val = float(ind5["adx"].iloc[-1]) if "adx" in ind5.columns else 0
             if np.isnan(adx_val):
                 adx_val = 0
- 
-            soft_b = soft5_b if direction == "BUY" else soft5_s
+
             s_dir_pct = buy5_pct if direction == "BUY" else sel5_pct
- 
+
             composite = round(
                 best_score * 0.45
                 + len(triggered) * 4
                 + (adx_val - 20) * 0.3
-                + soft_b * 5
                 + s_dir_pct * 0.1
                 + align_bonus
                 + (htf_adx - 20) * 0.15,
                 1,
             )
- 
+
             if composite < threshold:
                 return None
             if adx_val < self.MIN_ADX:
                 return None
- 
+            if direction == "SELL" and getattr(paper_engine, 'trading_mode', 'INTRADAY') == 'DELIVERY':
+                return None
+
             if direction == "BUY":
                 rec = "STRONG BUY" if buy_score >= 80 else "BUY" if buy_score >= 55 else "NEUTRAL"
             else:
                 rec = "STRONG SELL" if sell_score >= 80 else "SELL" if sell_score >= 55 else "NEUTRAL"
- 
+
             rsi_val = float(ind5["rsi"].iloc[-1]) if "rsi" in ind5.columns else 50
             if np.isnan(rsi_val):
                 rsi_val = 50
- 
+
             try:
                 today_str = end.strftime("%Y-%m-%d")
                 dt_s = pd.to_datetime(df5["date"] if "date" in df5.columns else df5.index)
@@ -1328,18 +1147,18 @@ class FullScanner:
                 )
             except Exception:
                 prev_close = float(df5["close"].iloc[-2]) if len(df5) > 1 else ltp
- 
+
             change_pct = round((ltp - prev_close) / prev_close * 100, 2) if prev_close else 0
             gap_pct = change_pct
             vol_ratio = round(float(df5["volume"].iloc[-1]) / (avg_vol + 1e-9), 2)
- 
+
             if vol_ratio > 2.0:
                 composite = round(composite + 5.0, 1)
             elif vol_ratio > 1.5:
                 composite = round(composite + 2.0, 1)
             if abs(gap_pct) > 1.0 and vol_ratio > 1.3:
                 composite = round(composite + 3.0, 1)
- 
+
             return {
                 "symbol": sym,
                 "price": round(ltp, 2),
@@ -1348,8 +1167,8 @@ class FullScanner:
                 "avg_volume": int(avg_vol),
                 "buy_score": round(buy_score, 1),
                 "sell_score": round(sell_score, 1),
-                "buy5_score": round(buy5_score, 1),
-                "sell5_score": round(sell5_score, 1),
+                "buy5_score": round(buy5_pct, 1),
+                "sell5_score": round(sel5_pct, 1),
                 "buy15_score": round(htf_buy_score, 1),
                 "sell15_score": round(htf_sell_score, 1),
                 "htf_align": htf_align,
@@ -1358,8 +1177,6 @@ class FullScanner:
                 "recommendation": rec,
                 "buy_pct": round(buy5_pct, 1),
                 "sell_pct": round(sel5_pct, 1),
-                "soft_b": int(soft5_b),
-                "soft_s": int(soft5_s),
                 "signal_count": len(triggered),
                 "strategies": triggered[:8],
                 "indicators": {
@@ -1372,8 +1189,6 @@ class FullScanner:
                         if "atr_percent" in ind5.columns else 0, 2
                     ),
                 },
-                "p6_buy": bool(g5.get("p6_buy", False)),
-                "p6_sell": bool(g5.get("p6_sell", False)),
                 "htf_bull": round(
                     float(ind5["htf_bull"].iloc[-1])
                     if "htf_bull" in ind5.columns else 0.5, 2
@@ -1382,7 +1197,7 @@ class FullScanner:
                 "gap_pct": round(gap_pct, 2),
                 "vol_ratio": round(vol_ratio, 2),
             }
- 
+
         except Exception as e:
             logger.debug(f"Score stock error {sym}: {e}")
             return None
@@ -1549,7 +1364,6 @@ class PaperTradingEngine:
     SQUARE_OFF_TIME = 915
     MIN_SIGNAL_SCORE = 35.0
     MIN_VOTE_PCT = 50.0
-    MIN_SOFT_LAYERS = 2
     MIN_VOL_SURGE = 1.3
     COUNTER_TREND_SCORE_BOOST = 15.0
     MIN_HTF_ALIGN_SCORE = 42.0
@@ -1566,22 +1380,13 @@ class PaperTradingEngine:
     # happens every time) means the 100-file retention cap in _backup_file
     # actually spans hours of history instead of a couple of minutes.
     BACKUP_INTERVAL_SECONDS = 300
-    # The p1-p10 panel/gate scoring system (_panel_gates, sector bias,
-    # HTF-conflict penalties, ATR/candle vetoes, MIN_SOFT_LAYERS, etc.) was
-    # purpose-built around v4_high_trust's indicator set and thresholds.
-    # It must NOT be silently applied to other strategies, which have their
-    # own internal entry logic and may disagree with these assumptions.
-    # Only the strategy named below gets the full panel-gate treatment;
-    # any other selected strategy falls back to native vote-based scoring
-    # (see _panels_enabled() / _check_signal() / _score_stock()).
-    PANEL_GATE_STRATEGY = 'v4_high_trust'
     
     def __init__(self, config, strategies_dict, scanner=None, trading_mode='INTRADAY', strategy_name=None, risk_config=None):
         self.config = config
         self.strategies_dict = strategies_dict
         self.scanner = scanner
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
-        self.strategy_name = strategy_name or self.PANEL_GATE_STRATEGY
+        self.strategy_name = strategy_name
         # Target/SL are user-configurable per trading mode (see Settings ->
         # Target & Stop Loss), not fixed constants. risk_config holds UI-scale
         # percents (1.0 == 1%); convert to fractions and pick the pair that
@@ -1609,6 +1414,20 @@ class PaperTradingEngine:
         # of a fixed absolute number.
         self.max_target_pct = round(self.target_pct * 1.5, 4)
         self.max_sl_pct = round(self.stoploss_pct * 1.6, 4)
+        # CNC/Delivery: minimum calendar days a position must be held before
+        # the algo is allowed to auto-exit it on TARGET/STOP_LOSS — mirrors
+        # real swing/investment behavior instead of same-session flips.
+        # User-controlled via Settings -> Target & Stop Loss. Manual exits
+        # (the Exit button) are NOT blocked by this — it only gates the
+        # automated monitor loop.
+        if self.trading_mode == 'DELIVERY':
+            try:
+                mhd = int(rc.get('min_hold_days_delivery', 1))
+            except (TypeError, ValueError):
+                mhd = 1
+            self.min_hold_days = max(0, min(30, mhd))
+        else:
+            self.min_hold_days = 0
         self.risk_config = rc
         self.PAPER_FILE = config.PAPER_FILE
         self.PAPER_BACKUP_DIR = config.PAPER_BACKUP_DIR
@@ -1632,28 +1451,7 @@ class PaperTradingEngine:
         self._fast_exit_thread = None
         self._sector_bias_cache = {}
         self._diag_log_cooldown = {}
-        logger.info(f"PaperTradingEngine initialized [mode={self.trading_mode}] [strategy={self.strategy_name}] [panel_gates={'ON' if self.panels_enabled() else 'OFF (native strategy scoring)'}]")
-
-    def panels_enabled(self):
-        """True only when the active strategy is the one the panel/gate
-        system (_panel_gates, sector bias, HTF-conflict logic, soft-layer
-        minimums, ATR/candle vetoes) was designed for. Any other strategy
-        is scored purely from its own triggered signals."""
-        return self.strategy_name == self.PANEL_GATE_STRATEGY
-
-    def _null_gates(self):
-        """Neutral gate dict used when panels are disabled for the active
-        strategy — every panel reads False/0 so it contributes nothing to
-        scoring, and no panel-specific veto (doji, ATR range, supertrend
-        advisory) can fire for a strategy the panels weren't built for."""
-        g = {k: False for k in ['p1_buy','p1_sell','p2_buy','p2_sell','p3_buy','p3_sell',
-                                 'p4_buy','p4_sell','p5_buy','p5_sell','p6_buy','p6_sell',
-                                 'p7_buy','p7_sell','p8_ok','p9_ok','p10_buy','p10_sell']}
-        g['p8_ok'] = True
-        g['p9_ok'] = True
-        g['buy_bonus'] = 0.0
-        g['sell_bonus'] = 0.0
-        return g
+        logger.info(f"PaperTradingEngine initialized [mode={self.trading_mode}] [strategy={self.strategy_name}]")
 
     def _log_diag(self, key, entry):
         """Log a low-value/repetitive diagnostic rejection (e.g. price too low,
@@ -1701,6 +1499,14 @@ class PaperTradingEngine:
                         stoploss = pos.get("stoploss")
                         if target is None or stoploss is None:
                             continue
+
+                        if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
+                            try:
+                                held_days = (now - datetime.fromisoformat(pos["entry_time"])).total_seconds() / 86400
+                            except Exception:
+                                held_days = self.min_hold_days
+                            if held_days < self.min_hold_days:
+                                continue
 
                         exit_price = None
                         reason = None
@@ -2043,7 +1849,12 @@ class PaperTradingEngine:
                         pos['stoploss'] = candidate
                         updated = True
                         logger.info(f"Trail tightened SHORT -> SL {candidate:.2f} (ltp={ltp:.2f})")
-        if mins >= 870:
+        # EOD stop-loss tightening only makes sense for INTRADAY (MIS)
+        # positions that must be squared off by 15:15 — squeezing the SL
+        # toward LTP at 14:30 on a DELIVERY/CNC position would force it
+        # closed the same day it was opened, which is exactly the
+        # intraday-style forced-exit behavior CNC must not have.
+        if self.trading_mode == 'INTRADAY' and mins >= 870:
             if side == 'BUY':
                 eod_sl = round(ltp * 0.998, 2)
                 if eod_sl > pos.get('stoploss', 0):
@@ -2262,7 +2073,7 @@ class PaperTradingEngine:
                 sl = round(price * (1.0 + self.stoploss_pct), 2)
         return tgt, sl
     
-    def _check_entry_quality(self, df, ind, side, symbol):
+    def _check_entry_quality(self, df, ind, side, symbol, strategy_name=None):
         try:
             price = float(df['close'].iloc[-1])
             open_ = float(df['open'].iloc[-1])
@@ -2270,6 +2081,10 @@ class PaperTradingEngine:
             low_ = float(df['low'].iloc[-1])
             now = datetime.now()
             now_mins = now.hour * 60 + now.minute
+
+            category = AVAILABLE_STRATEGY_META.get(strategy_name, {}).get('category', 'default')
+            skip_extension_checks = category in ('breakout', 'momentum')
+
             def _iv(key, fallback=0.0):
                 try:
                     v = float(ind[key].iloc[-1])
@@ -2293,6 +2108,7 @@ class PaperTradingEngine:
                             f"({vol_mult}x avg)")
             if cur_vol < avg_vol * self.MIN_VOL_SURGE:
                 return False, (f"Volume surge insufficient: {cur_vol/avg_vol:.1f}x < {self.MIN_VOL_SURGE}x")
+
             def _candle_patterns(df_slice):
                 cp = {}
                 try:
@@ -2359,30 +2175,33 @@ class PaperTradingEngine:
                 triggered = [p for p in bullish_veto if cp.get(p)]
                 if triggered:
                     return False, (f"Bullish candle pattern on trigger bar: {', '.join(triggered)}")
-            if side == 'BUY':
-                if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
-                    return False, (f"Price extended above VWAP+1σ ({price:.2f} > {vwap_u1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
-                if atr > 0 and vwap > 0 and (price - vwap) > 2.0 * atr:
-                    return False, (f"Price > 2×ATR above VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late long entry")
-            if side == 'SELL':
-                if vwap_l1 > 0 and price < vwap_l1 and roc5 < -1.5:
-                    return False, (f"Price extended below VWAP-1σ ({price:.2f} < {vwap_l1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
-                if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
-                    return False, (f"Price > 2×ATR below VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late short entry")
-            if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
-                return False, (f"Overbought — RSI {rsi:.1f} > 72 and HTF bull strength {htf_bull:.2f} > 0.85 (chasing a tired move)")
-            if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
-                return False, (f"Oversold — RSI {rsi:.1f} < 28 and HTF bull {htf_bull:.2f} < 0.15 (shorting into exhaustion)")
-            if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
-                return False, (f"BUY price {price:.2f} is >2% below EMA50 {ema50:.2f} — counter-trend long")
-            if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
-                return False, (f"SELL price {price:.2f} is >2% above EMA50 {ema50:.2f} — counter-trend short")
-            if side == 'BUY' and rsi > 75:
-                return False, f"BUY into overbought RSI {rsi:.1f} > 75"
-            if side == 'SELL' and rsi < 25:
-                return False, f"SELL into oversold RSI {rsi:.1f} < 25"
-            if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
-                return False, (f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing the move down")
+
+            if not skip_extension_checks:
+                if side == 'BUY':
+                    if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
+                        return False, (f"Price extended above VWAP+1σ ({price:.2f} > {vwap_u1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
+                    if atr > 0 and vwap > 0 and (price - vwap) > 2.0 * atr:
+                        return False, (f"Price > 2×ATR above VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late long entry")
+                if side == 'SELL':
+                    if vwap_l1 > 0 and price < vwap_l1 and roc5 < -1.5:
+                        return False, (f"Price extended below VWAP-1σ ({price:.2f} < {vwap_l1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
+                    if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
+                        return False, (f"Price > 2×ATR below VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late short entry")
+                if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
+                    return False, (f"Overbought — RSI {rsi:.1f} > 72 and HTF bull strength {htf_bull:.2f} > 0.85 (chasing a tired move)")
+                if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
+                    return False, (f"Oversold — RSI {rsi:.1f} < 28 and HTF bull {htf_bull:.2f} < 0.15 (shorting into exhaustion)")
+                if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
+                    return False, (f"BUY price {price:.2f} is >2% below EMA50 {ema50:.2f} — counter-trend long")
+                if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
+                    return False, (f"SELL price {price:.2f} is >2% above EMA50 {ema50:.2f} — counter-trend short")
+                if side == 'BUY' and rsi > 75:
+                    return False, f"BUY into overbought RSI {rsi:.1f} > 75"
+                if side == 'SELL' and rsi < 25:
+                    return False, f"SELL into oversold RSI {rsi:.1f} < 25"
+                if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
+                    return False, (f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing the move down")
+
             return True, None
         except Exception as e:
             logger.error(f"Entry quality error {symbol}: {e}")
@@ -2402,20 +2221,34 @@ class PaperTradingEngine:
         if not can_trade:
             _block(f"Circuit breaker: {msg}")
             return None
+        # CNC/Delivery is cash-only — you can only sell shares you already
+        # hold, never open a fresh short. This is the single choke-point
+        # every entry path (live signals, sector monitor, manual) goes
+        # through, so blocking SELL here is what actually enforces the
+        # restriction rather than relying on each caller to self-police.
+        if side == 'SELL' and self.trading_mode == 'DELIVERY':
+            _block("SELL blocked — CNC/Delivery mode does not support short selling")
+            return None
         if len(self.data['positions']) >= self.MAX_OPEN_POS:
             _block(f"Max positions ({self.MAX_OPEN_POS}) already open")
             return None
         now = datetime.now()
         mins = now.hour * 60 + now.minute
-        if mins >= self.NO_NEW_TRADES_AFTER:
-            _block(f"After cutoff {now.strftime('%H:%M')} >= 14:30")
-            return None
-        if not _in_trade_slot(mins):
-            _block(
-                f"Outside trade slot [{_slot_label(mins)}] — "
-                f"allowed 9:15–14:00"
-            )
-            return None
+        # The 9:15-14:00 trade slot and 14:30 cutoff exist only to guarantee
+        # enough runway to square off an INTRADAY (MIS) position by 15:15.
+        # CNC/Delivery has no forced square-off, so it may enter any time
+        # during market hours (already gated to 9:30-15:30 by the caller in
+        # _check_signal via MARKET_OPEN+15 / MARKET_CLOSE).
+        if self.trading_mode == 'INTRADAY':
+            if mins >= self.NO_NEW_TRADES_AFTER:
+                _block(f"After cutoff {now.strftime('%H:%M')} >= 14:30")
+                return None
+            if not _in_trade_slot(mins):
+                _block(
+                    f"Outside trade slot [{_slot_label(mins)}] — "
+                    f"allowed 9:15–14:00"
+                )
+                return None
         if price < self.MIN_PRICE:
             _block(f"Price {price:.2f} below min {self.MIN_PRICE}")
             return None
@@ -2436,7 +2269,7 @@ class PaperTradingEngine:
         except Exception:
             pass
         if df is not None and ind is not None:
-            ok, quality_reason = self._check_entry_quality(df, ind, side, symbol)
+            ok, quality_reason = self._check_entry_quality(df, ind, side, symbol, strategy_name)
             if not ok:
                 _block(f"Quality check failed: {quality_reason}")
                 return None
@@ -2726,6 +2559,8 @@ class PaperTradingEngine:
                 return None, sector, None
         return None, None, None
 
+    
+
     def _check_signal(self, symbol, kite, prefetched_ltp=None):
         if symbol not in SYMBOL_MAP:
             self._log_diag(
@@ -2743,15 +2578,23 @@ class PaperTradingEngine:
         try:
             now = datetime.now()
             mins = now.hour * 60 + now.minute
- 
-            if self.MARKET_OPEN <= mins < self.MARKET_OPEN + 15:
-                return
-            if mins >= self.MARKET_CLOSE:
+
+            with self._lock:
+                _has_open_pos = symbol in self.data.get("positions", {})
+
+            if not _has_open_pos:
+                if self.MARKET_OPEN <= mins < self.MARKET_OPEN + 15:
+                    return
+                if mins >= self.MARKET_CLOSE:
+                    return
+            elif mins >= self.MARKET_CLOSE:
                 return
 
             _current_slot_ok = _in_trade_slot(mins)
             _current_slot_lbl = _slot_label(mins)
- 
+
+            min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
+
             _hist_limiter.wait(f"5min {symbol}")
             data5 = kite.historical_data(
                 SYMBOL_MAP[symbol]["token"],
@@ -2759,7 +2602,7 @@ class PaperTradingEngine:
                 now,
                 "5minute",
             )
-            if not data5 or len(data5) < 80:
+            if not data5 or len(data5) < min_bars_needed:
                 self._log_diag(
                     f"{symbol}:insufficient_data",
                     {
@@ -2770,21 +2613,21 @@ class PaperTradingEngine:
                         "status": "REJECTED",
                         "reason": (
                             f"Insufficient historical data "
-                            f"({len(data5) if data5 else 0} bars, need ≥80)"
+                            f"({len(data5) if data5 else 0} bars, need ≥{min_bars_needed})"
                         ),
                     },
                 )
                 return
- 
+
             df = pd.DataFrame(data5)
             ind = Indicators.calculate_all(df)
- 
+
             ltp_initial = (
                 prefetched_ltp
                 if prefetched_ltp is not None
                 else float(df["close"].iloc[-1])
             )
- 
+
             if ltp_initial < self.MIN_PRICE:
                 self._log_diag(
                     f"{symbol}:min_price",
@@ -2801,12 +2644,12 @@ class PaperTradingEngine:
                     },
                 )
                 return
- 
+
             avg_vol = float(df["volume"].iloc[-20:].mean())
             cur_vol = int(df["volume"].iloc[-1])
             now_mins = now.hour * 60 + now.minute
             vol_mult = 1.0 if now_mins < 10 * 60 else 0.5 if now_mins < 13 * 60 else 0.4
- 
+
             if cur_vol < avg_vol * vol_mult:
                 self._add_signal_log(
                     {
@@ -2824,27 +2667,25 @@ class PaperTradingEngine:
                     }
                 )
                 return
- 
+
             pin_meta = self.data.get("pinned_meta", {}).get(symbol, {})
             pin_dir = pin_meta.get("direction", "BOTH")
             allow_buy = pin_dir in ("BUY", "BOTH")
             allow_sell = pin_dir in ("SELL", "BOTH")
- 
-            panels_on = self.panels_enabled()
-            g = _panel_gates(ind, len(df) - 1) if panels_on else self._null_gates()
-            df_w = df.iloc[-60:].reset_index(drop=True)
-            ind_w = ind.iloc[-60:].reset_index(drop=True)
- 
-            strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
+
+            df_w = df.iloc[-min_bars_needed:].reset_index(drop=True)
+            ind_w = ind.iloc[-min_bars_needed:].reset_index(drop=True)
+
+            strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
             st5_total = strat5_b + strat5_s
             s5_buy_pct = strat5_b / st5_total * 100 if st5_total > 0 else 50.0
             s5_sel_pct = strat5_s / st5_total * 100 if st5_total > 0 else 50.0
- 
+
             htf15_buy_pct = 50.0
             htf15_sel_pct = 50.0
             htf15_ok_buy = False
             htf15_ok_sell = False
- 
+
             try:
                 _hist_limiter.wait(f"15min signal {symbol}")
                 data15 = kite.historical_data(
@@ -2853,12 +2694,12 @@ class PaperTradingEngine:
                     now,
                     "15minute",
                 )
-                if data15 and len(data15) >= 40:
+                if data15 and len(data15) >= min_bars_needed:
                     df15 = pd.DataFrame(data15)
                     ind15 = Indicators.calculate_all(df15)
-                    df15_w = df15.iloc[-40:].reset_index(drop=True)
-                    ind15_w = ind15.iloc[-40:].reset_index(drop=True)
-                    b15, s15, _ = _strat_votes(df15_w, ind15_w, self.strategies_dict)
+                    df15_w = df15.iloc[-min_bars_needed:].reset_index(drop=True)
+                    ind15_w = ind15.iloc[-min_bars_needed:].reset_index(drop=True)
+                    b15, s15, _ = _strat_votes(df15_w, ind15_w, self.strategies_dict, self.strategy_performance)
                     t15 = b15 + s15
                     htf15_buy_pct = b15 / t15 * 100 if t15 > 0 else 50.0
                     htf15_sel_pct = s15 / t15 * 100 if t15 > 0 else 50.0
@@ -2866,9 +2707,6 @@ class PaperTradingEngine:
                     htf15_ok_sell = htf15_sel_pct >= self.MIN_VOTE_PCT
             except Exception as e:
                 logger.debug(f"15-min data error {symbol}: {e}")
- 
-            soft_b = sum([g.get(f"p{i}_buy", 0) for i in [1, 2, 3, 4, 5, 10]])
-            soft_s = sum([g.get(f"p{i}_sell", 0) for i in [1, 2, 3, 4, 5, 10]])
 
             htf_bull = (
                 float(ind["htf_bull"].iloc[-1])
@@ -2878,94 +2716,31 @@ class PaperTradingEngine:
 
             sector_bias_log = ""
 
-            if panels_on:
-                # ── Full panel/gate pipeline — built for & only used by v4_high_trust ──
-                buy_score = soft_b * 15.0 + g.get("buy_bonus", 0) + s5_buy_pct * 0.2
-                sell_score = soft_s * 15.0 + g.get("sell_bonus", 0) + s5_sel_pct * 0.2
+            buy_score = s5_buy_pct
+            sell_score = s5_sel_pct
+            htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
+            htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
+            effective_buy_min = self.MIN_VOTE_PCT
+            effective_sell_min = self.MIN_VOTE_PCT
 
-                if not g.get("p8_ok", True):
-                    buy_score -= 15.0
-                    sell_score -= 15.0
-                if not g.get("p9_ok", True):
-                    buy_score -= 10.0
-                    sell_score -= 10.0
+            buy_ok = (
+                allow_buy
+                and s5_buy_pct >= self.MIN_VOTE_PCT
+                and strat5_b >= 1.0
+            )
+            sell_ok = (
+                allow_sell
+                and s5_sel_pct >= self.MIN_VOTE_PCT
+                and strat5_s >= 1.0
+                and self.trading_mode != 'DELIVERY'
+            )
 
-                if g.get("p6_buy", False):
-                    buy_score += 8.0
-                elif g.get("p6_sell", False):
-                    buy_score -= 4.0
-                if g.get("p6_sell", False):
-                    sell_score += 8.0
-                elif g.get("p6_buy", False):
-                    sell_score -= 4.0
-
-                htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
-                htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
-                if htf15_conflict_buy:
-                    buy_score -= 10.0
-                if htf15_conflict_sell:
-                    sell_score -= 10.0
-
-                dual_conflict_buy = g.get("p6_sell", False) and htf15_conflict_buy
-                dual_conflict_sell = g.get("p6_buy", False) and htf15_conflict_sell
-                effective_buy_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_buy else self.MIN_SIGNAL_SCORE)
-                effective_sell_min = (self.MIN_HTF_ALIGN_SCORE if dual_conflict_sell else self.MIN_SIGNAL_SCORE)
-
-                _sec_dir, _sec_name, _sec_meta = self._get_sector_bias(symbol)
-                if _sec_dir and _sec_name:
-                    if _sec_dir == "BUY":
-                        buy_score += self.SECTOR_BIAS_SCORE
-                        sell_score -= self.SECTOR_BIAS_SCORE
-                        sector_bias_log = f"Sector {_sec_name} BULLISH → +{self.SECTOR_BIAS_SCORE:.0f} BUY"
-                    else:
-                        sell_score += self.SECTOR_BIAS_SCORE
-                        buy_score -= self.SECTOR_BIAS_SCORE
-                        sector_bias_log = f"Sector {_sec_name} BEARISH → +{self.SECTOR_BIAS_SCORE:.0f} SELL"
-                    logger.debug(f"[{symbol}] {sector_bias_log}")
-
-                buy_ok = (
-                    allow_buy
-                    and htf_bull >= 0.45
-                    and soft_b >= self.MIN_SOFT_LAYERS
-                    and s5_buy_pct >= self.MIN_VOTE_PCT
-                    and buy_score >= effective_buy_min
-                )
-                sell_ok = (
-                    allow_sell
-                    and htf_bull <= 0.55
-                    and soft_s >= self.MIN_SOFT_LAYERS
-                    and s5_sel_pct >= self.MIN_VOTE_PCT
-                    and sell_score >= effective_sell_min
-                )
-            else:
-                # ── Native mode — any strategy other than v4_high_trust. No panel
-                # bonuses/vetoes, no HTF-conflict penalties, no sector bias: the
-                # strategy's own 5-min vote strength is the whole score, and its
-                # own triggered functions are the only requirement to enter. ──
-                buy_score = s5_buy_pct
-                sell_score = s5_sel_pct
-                htf15_conflict_buy = htf15_conflict_sell = False
-                dual_conflict_buy = dual_conflict_sell = False
-                effective_buy_min = self.MIN_VOTE_PCT
-                effective_sell_min = self.MIN_VOTE_PCT
-
-                buy_ok = (
-                    allow_buy
-                    and s5_buy_pct >= self.MIN_VOTE_PCT
-                    and strat5_b >= 1.0
-                )
-                sell_ok = (
-                    allow_sell
-                    and s5_sel_pct >= self.MIN_VOTE_PCT
-                    and strat5_s >= 1.0
-                )
- 
             if buy_ok and sell_ok:
                 if sell_score > buy_score:
                     buy_ok = False
                 else:
                     sell_ok = False
- 
+
             all_triggered = []
             for name, func in self.strategies_dict.items():
                 try:
@@ -2973,14 +2748,16 @@ class PaperTradingEngine:
                         all_triggered.append(name)
                 except Exception:
                     continue
- 
+
             direction_triggered = [
                 n for n in all_triggered
-                if (allow_buy and any(k in n for k in BUY_KW))
-                or (allow_sell and any(k in n for k in SELL_KW))
-                or (not any(k in n for k in BUY_KW + SELL_KW))
+                if (lambda _dir: (
+                    (allow_buy and _dir == 'BUY')
+                    or (allow_sell and _dir == 'SELL')
+                    or _dir == 'BOTH'
+                ))(AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH'))
             ]
- 
+
             best_strategy = None
             best_sc = -1
             for name in direction_triggered:
@@ -2990,13 +2767,13 @@ class PaperTradingEngine:
                 if sc > best_sc:
                     best_sc = sc
                     best_strategy = name
- 
+
             if not best_strategy and (buy_ok or sell_ok):
-                best_strategy = "PANEL_SIGNAL"
- 
+                best_strategy = "VOTE_SIGNAL"
+
             atr = float(ind["atr"].iloc[-1]) if "atr" in ind.columns else None
             nifty_data = get_nifty_data(kite)
- 
+
             if nifty_data:
                 market_trend = (
                     "BULLISH" if nifty_data["change"] > 0.3
@@ -3007,13 +2784,13 @@ class PaperTradingEngine:
             else:
                 market_trend = "NEUTRAL"
                 market_regime = "UNKNOWN"
- 
+
             skip_breakout = (
                 market_regime == "RANGING"
                 and best_strategy
-                and "BREAKOUT" in best_strategy
+                and AVAILABLE_STRATEGY_META.get(best_strategy, {}).get('category') == 'breakout'
             )
- 
+
             log_entry = {
                 "time": now.strftime("%H:%M:%S"),
                 "date": now.strftime("%Y-%m-%d"),
@@ -3023,16 +2800,12 @@ class PaperTradingEngine:
                 "avg_volume": int(avg_vol),
                 "buy_score": round(buy_score, 1),
                 "sell_score": round(sell_score, 1),
-                "soft_b": soft_b,
-                "soft_s": soft_s,
                 "vote_b": round(s5_buy_pct, 1),
                 "vote_s": round(s5_sel_pct, 1),
                 "htf15_buy_pct": round(htf15_buy_pct, 1),
                 "htf15_sel_pct": round(htf15_sel_pct, 1),
                 "hard_buy": buy_ok,
                 "hard_sell": sell_ok,
-                "p6_buy": g.get("p6_buy", False),
-                "p6_sell": g.get("p6_sell", False),
                 "htf_bull": round(htf_bull, 3),
                 "strategies": direction_triggered[:5],
                 "all_strategies": all_triggered[:8],
@@ -3042,31 +2815,31 @@ class PaperTradingEngine:
                 "sector_bias": sector_bias_log,
                 "market_trend": market_trend,
                 "market_regime": market_regime,
-                "strategy_mode": "PANEL (v4_high_trust)" if panels_on else f"NATIVE ({self.strategy_name})",
+                "strategy_mode": f"NATIVE ({self.strategy_name})",
             }
- 
+
             try:
                 _cp_now, _, _ = detect_candle_patterns(df, len(df) - 1)
                 log_entry["candle_patterns"] = [k for k, v in _cp_now.items() if v][:6]
             except Exception:
                 log_entry["candle_patterns"] = []
- 
+
             with self._lock:
                 pos = self.data["positions"].get(symbol)
- 
+
                 if pos:
                     log_entry["status"] = "IN_POSITION"
                     log_entry["pos_side"] = pos["side"]
                     log_entry["pos_entry"] = pos["entry_price"]
                     log_entry["pos_qty"] = pos["qty"]
                     self._add_signal_log(log_entry)
- 
+
                     fresh_ltp = (
                         prefetched_ltp
                         if prefetched_ltp is not None
                         else (self._get_live_ltp(symbol) or ltp_initial)
                     )
- 
+
                     try:
                         held_mins = (
                             (datetime.now() - datetime.fromisoformat(pos["entry_time"]))
@@ -3074,7 +2847,7 @@ class PaperTradingEngine:
                         )
                     except Exception:
                         held_mins = 0
- 
+
                     move_pct = (
                         ((fresh_ltp - pos["entry_price"]) / pos["entry_price"] * 100)
                         if pos["side"] == "BUY"
@@ -3082,12 +2855,21 @@ class PaperTradingEngine:
                             (pos["entry_price"] - fresh_ltp) / pos["entry_price"] * 100
                         )
                     )
- 
-                    self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
-                    exit_price, reason = self._check_stop_loss_target(
-                        symbol, pos, df, fresh_ltp
-                    )
- 
+
+                    hold_locked = False
+                    if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
+                        held_days = held_mins / (60 * 24)
+                        hold_locked = held_days < self.min_hold_days
+                        log_entry["hold_days_left"] = round(self.min_hold_days - held_days, 2)
+
+                    if hold_locked:
+                        exit_price, reason = None, None
+                    else:
+                        self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
+                        exit_price, reason = self._check_stop_loss_target(
+                            symbol, pos, df, fresh_ltp
+                        )
+
                     if exit_price:
                         if symbol in self.data["positions"]:
                             el = log_entry.copy()
@@ -3098,8 +2880,8 @@ class PaperTradingEngine:
                             )
                             self._save()
                         return
- 
-                    if held_mins > self.MAX_POSITION_HOLD_MINUTES:
+
+                    if self.trading_mode == 'INTRADAY' and held_mins > self.MAX_POSITION_HOLD_MINUTES:
                         el = log_entry.copy()
                         el.update(
                             {
@@ -3111,27 +2893,28 @@ class PaperTradingEngine:
                         self._close_position_nolock(symbol, reason="MAX_HOLD_TIME")
                         self._save()
                         return
- 
+
                     self._save()
                     return
- 
-                if mins >= self.NO_NEW_TRADES_AFTER:
-                    log_entry["status"] = "REJECTED"
-                    log_entry["reason"] = (
-                        f"After cutoff {now.strftime('%H:%M')} (cutoff=14:30)"
-                    )
-                    self._add_signal_log(log_entry)
-                    return
 
-                if not _current_slot_ok:
-                    log_entry["status"] = "REJECTED"
-                    log_entry["reason"] = (
-                        f"Outside trade slot — {_current_slot_lbl} "
-                        f"| Allowed: 9:15–14:00"
-                    )
-                    self._add_signal_log(log_entry)
-                    return
- 
+                if self.trading_mode == 'INTRADAY':
+                    if mins >= self.NO_NEW_TRADES_AFTER:
+                        log_entry["status"] = "REJECTED"
+                        log_entry["reason"] = (
+                            f"After cutoff {now.strftime('%H:%M')} (cutoff=14:30)"
+                        )
+                        self._add_signal_log(log_entry)
+                        return
+
+                    if not _current_slot_ok:
+                        log_entry["status"] = "REJECTED"
+                        log_entry["reason"] = (
+                            f"Outside trade slot — {_current_slot_lbl} "
+                            f"| Allowed: 9:15–14:00"
+                        )
+                        self._add_signal_log(log_entry)
+                        return
+
                 if symbol in self.last_exit_time:
                     ts = (now - self.last_exit_time[symbol]).total_seconds() / 60
                     if ts < self.COOLDOWN_MINUTES:
@@ -3141,14 +2924,14 @@ class PaperTradingEngine:
                         )
                         self._add_signal_log(log_entry)
                         return
- 
+
                 if self.data["positions"]:
                     other = list(self.data["positions"].keys())[0]
                     log_entry["status"] = "BLOCKED_OTHER_POS"
                     log_entry["reason"] = f"Already in position: {other}"
                     self._add_signal_log(log_entry)
                     return
- 
+
                 if skip_breakout:
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
@@ -3156,7 +2939,7 @@ class PaperTradingEngine:
                     )
                     self._add_signal_log(log_entry)
                     return
- 
+
                 def _corr_ok(trade_side):
                     if not nifty_data:
                         return True
@@ -3165,7 +2948,7 @@ class PaperTradingEngine:
                     if market_trend == "BEARISH" and trade_side == "BUY" and symbol in HEAVYWEIGHTS:
                         return False
                     return True
- 
+
                 if buy_ok and not _corr_ok("BUY"):
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
@@ -3174,7 +2957,7 @@ class PaperTradingEngine:
                     )
                     self._add_signal_log(log_entry)
                     return
- 
+
                 if sell_ok and not _corr_ok("SELL"):
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
@@ -3183,7 +2966,7 @@ class PaperTradingEngine:
                     )
                     self._add_signal_log(log_entry)
                     return
- 
+
                 if buy_ok:
                     _quote_limiter.wait(f"order_ltp BUY {symbol}")
                     ltp_for_order = kite.ltp([f"NSE:{symbol}"])
@@ -3196,7 +2979,7 @@ class PaperTradingEngine:
                     log_entry["ltp"] = round(ltp_for_order, 2)
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(buy_score,1)}) | "
-                        f"Layers: {soft_b} | 5m Vote: {round(s5_buy_pct,1)}% | "
+                        f"5m Vote: {round(s5_buy_pct,1)}% | "
                         f"15m Vote: {round(htf15_buy_pct,1)}% | "
                         f"HTF: {round(htf_bull,3)} | Pinned as: {pin_dir} | "
                         f"Slot: {_current_slot_lbl}"
@@ -3216,7 +2999,7 @@ class PaperTradingEngine:
                                 lg["status"] = "BUY_NO_FILL"
                                 break
                         self._save()
- 
+
                 elif sell_ok:
                     _quote_limiter.wait(f"order_ltp SELL {symbol}")
                     ltp_for_order = kite.ltp([f"NSE:{symbol}"])
@@ -3229,7 +3012,7 @@ class PaperTradingEngine:
                     log_entry["ltp"] = round(ltp_for_order, 2)
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(sell_score,1)}) | "
-                        f"Layers: {soft_s} | 5m Vote: {round(s5_sel_pct,1)}% | "
+                        f"5m Vote: {round(s5_sel_pct,1)}% | "
                         f"15m Vote: {round(htf15_sel_pct,1)}% | "
                         f"HTF: {round(htf_bull,3)} | Pinned as: {pin_dir} | "
                         f"Slot: {_current_slot_lbl}"
@@ -3249,120 +3032,41 @@ class PaperTradingEngine:
                                 lg["status"] = "SELL_NO_FILL"
                                 break
                         self._save()
- 
+
                 else:
                     reasons = []
-                    if panels_on:
-                        raw_buy_ok = (
-                            htf_bull >= 0.45
-                            and soft_b >= self.MIN_SOFT_LAYERS
-                            and s5_buy_pct >= self.MIN_VOTE_PCT
-                            and buy_score >= effective_buy_min
-                        )
-                        raw_sell_ok = (
-                            htf_bull <= 0.55
-                            and soft_s >= self.MIN_SOFT_LAYERS
-                            and s5_sel_pct >= self.MIN_VOTE_PCT
-                            and sell_score >= effective_sell_min
-                        )
-                    else:
-                        raw_buy_ok = (s5_buy_pct >= self.MIN_VOTE_PCT and strat5_b >= 1.0)
-                        raw_sell_ok = (s5_sel_pct >= self.MIN_VOTE_PCT and strat5_s >= 1.0)
+                    raw_buy_ok = (s5_buy_pct >= self.MIN_VOTE_PCT and strat5_b >= 1.0)
+                    raw_sell_ok = (s5_sel_pct >= self.MIN_VOTE_PCT and strat5_s >= 1.0)
                     if raw_buy_ok and not allow_buy:
                         reasons.append(f"BUY signal blocked — stock pinned as {pin_dir} only")
                     if raw_sell_ok and not allow_sell:
                         reasons.append(f"SELL signal blocked — stock pinned as {pin_dir} only")
 
-                    if not reasons and not panels_on:
-                        # Native mode — simple vote-based diagnostics only,
-                        # no panel/HTF/sector machinery to report on.
-                        leaning_buy = buy_score >= sell_score
-                        check_dir = (
-                            "BUY" if (pin_dir == "BOTH" and leaning_buy)
-                            else pin_dir if pin_dir != "BOTH"
-                            else ("BUY" if leaning_buy else "SELL")
-                        )
-                        if check_dir == "BUY":
-                            if s5_buy_pct < self.MIN_VOTE_PCT:
-                                reasons.append(f"5m buy vote {s5_buy_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
-                            if strat5_b < 1.0:
-                                reasons.append(f"No {self.strategy_name} BUY strategy triggered")
-                        else:
-                            if s5_sel_pct < self.MIN_VOTE_PCT:
-                                reasons.append(f"5m sell vote {s5_sel_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
-                            if strat5_s < 1.0:
-                                reasons.append(f"No {self.strategy_name} SELL strategy triggered")
+                    leaning_buy = buy_score >= sell_score
+                    check_dir = (
+                        "BUY" if (pin_dir == "BOTH" and leaning_buy)
+                        else pin_dir if pin_dir != "BOTH"
+                        else ("BUY" if leaning_buy else "SELL")
+                    )
+                    if check_dir == "BUY":
+                        if s5_buy_pct < self.MIN_VOTE_PCT:
+                            reasons.append(f"5m buy vote {s5_buy_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
+                        if strat5_b < 1.0:
+                            reasons.append(f"No {self.strategy_name} BUY strategy triggered")
+                    else:
+                        if s5_sel_pct < self.MIN_VOTE_PCT:
+                            reasons.append(f"5m sell vote {s5_sel_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
+                        if strat5_s < 1.0:
+                            reasons.append(f"No {self.strategy_name} SELL strategy triggered")
 
-                    if not reasons and panels_on:
-                        leaning_buy = buy_score >= sell_score
-                        check_dir = (
-                            "BUY" if (pin_dir == "BOTH" and leaning_buy)
-                            else pin_dir if pin_dir != "BOTH"
-                            else ("BUY" if leaning_buy else "SELL")
-                        )
-                        if check_dir == "BUY":
-                            if htf_bull < 0.45:
-                                reasons.append(f"HTF bull {htf_bull:.3f} < 0.45 (need ≥0.45)")
-                            if dual_conflict_buy:
-                                reasons.append(
-                                    f"DUAL CONFLICT: ST+15m both bearish → "
-                                    f"need ≥{self.MIN_HTF_ALIGN_SCORE} (got {buy_score:.1f})"
-                                )
-                            elif g.get("p6_sell"):
-                                reasons.append(
-                                    f"Supertrend bearish → -4 score penalty (advisory)"
-                                )
-                            if soft_b < self.MIN_SOFT_LAYERS:
-                                reasons.append(f"Buy panels {soft_b} < min {self.MIN_SOFT_LAYERS}")
-                            if s5_buy_pct < self.MIN_VOTE_PCT:
-                                reasons.append(f"5m buy vote {s5_buy_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
-                            if buy_score < effective_buy_min:
-                                reasons.append(
-                                    f"Buy score {buy_score:.1f} < required {effective_buy_min:.0f}"
-                                )
-                            if htf15_conflict_buy and not dual_conflict_buy:
-                                reasons.append(
-                                    f"15m conflict -10 pts: "
-                                    f"{htf15_buy_pct:.0f}% buy vs {htf15_sel_pct:.0f}% sell on 15m"
-                                )
-                        else:
-                            if htf_bull > 0.55:
-                                reasons.append(f"HTF bull {htf_bull:.3f} > 0.55 (need ≤0.55)")
-                            if dual_conflict_sell:
-                                reasons.append(
-                                    f"DUAL CONFLICT: ST+15m both bullish → "
-                                    f"need ≥{self.MIN_HTF_ALIGN_SCORE} (got {sell_score:.1f})"
-                                )
-                            elif g.get("p6_buy"):
-                                reasons.append(
-                                    f"Supertrend bullish → -4 score penalty (advisory)"
-                                )
-                            if soft_s < self.MIN_SOFT_LAYERS:
-                                reasons.append(f"Sell panels {soft_s} < min {self.MIN_SOFT_LAYERS}")
-                            if s5_sel_pct < self.MIN_VOTE_PCT:
-                                reasons.append(f"5m sell vote {s5_sel_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
-                            if sell_score < effective_sell_min:
-                                reasons.append(
-                                    f"Sell score {sell_score:.1f} < required {effective_sell_min:.0f}"
-                                )
-                            if htf15_conflict_sell and not dual_conflict_sell:
-                                reasons.append(
-                                    f"15m conflict -10 pts: "
-                                    f"{htf15_sel_pct:.0f}% sell vs {htf15_buy_pct:.0f}% buy on 15m"
-                                )
-                        if not g.get("p8_ok", True):
-                            reasons.append("Doji/indecision candle (-15 buy / -15 sell penalty)")
-                        if not g.get("p9_ok", True):
-                            reasons.append("ATR% out of ideal range 0.8–2.5%")
- 
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
                         " | ".join(reasons[:3]) if reasons else "No clear signal"
                     )
                     self._add_signal_log(log_entry)
- 
+
                 self._save()
- 
+
         except Exception as e:
             logger.error(f"Signal check error {symbol}: {e}")
             traceback.print_exc()
@@ -3784,82 +3488,25 @@ class SectorMonitor:
         except Exception as e:
             logger.error(f"Error executing sector trade {best_stock}: {e}")
 
-# ==================== CANDLE PATTERN ENGINE ====================
-def detect_candle_patterns(df, i):
-    patterns = {}
-    buy_bonus = 0.0
-    sell_bonus = 0.0
-    try:
-        c = float(df['close'].iloc[i])
-        o = float(df['open'].iloc[i])
-        h = float(df['high'].iloc[i])
-        l = float(df['low'].iloc[i])
-        body = abs(c - o)
-        rng = (h - l) if (h - l) > 0 else 1e-9
-        body_r = body / rng
-        uw_r = (h - max(c, o)) / rng
-        lw_r = (min(c, o) - l) / rng
-        bull = c > o
-        bear = c < o
-        patterns['DOJI'] = body_r < 0.10
-        patterns['SPINNING_TOP'] = 0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25
-        patterns['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
-        patterns['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
-        patterns['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
-        patterns['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
-        patterns['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
-        patterns['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
-        patterns['STRONG_BULL_BODY'] = (body_r > 0.65 and bull and uw_r < 0.20)
-        patterns['STRONG_BEAR_BODY'] = (body_r > 0.65 and bear and lw_r < 0.20)
-        if i >= 1:
-            pc = float(df['close'].iloc[i-1])
-            po = float(df['open'].iloc[i-1])
-            ph = float(df['high'].iloc[i-1])
-            pl = float(df['low'].iloc[i-1])
-            pbull = pc > po
-            pbear = pc < po
-            prev_body = abs(pc - po)
-            patterns['BULL_ENGULFING'] = (pbear and bull and o < pc and c > po and body > prev_body * 1.0)
-            patterns['BEAR_ENGULFING'] = (pbull and bear and o > pc and c < po and body > prev_body * 1.0)
-            prev_mid = (po + pc) / 2
-            patterns['PIERCING_LINE'] = (pbear and bull and o < pl and c > prev_mid and c < po)
-            patterns['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < prev_mid and c > pc)
-            patterns['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
-            patterns['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
-        if i >= 2:
-            c2 = float(df['close'].iloc[i-2])
-            o2 = float(df['open'].iloc[i-2])
-            c1 = float(df['close'].iloc[i-1])
-            o1 = float(df['open'].iloc[i-1])
-            body1 = abs(c1 - o1)
-            rng1 = (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) if (float(df['high'].iloc[i-1]) - float(df['low'].iloc[i-1])) > 0 else 1e-9
-            mid1_body = body1 / rng1
-            bar2_mid = (o2 + c2) / 2
-            patterns['MORNING_STAR'] = (c2 < o2 and mid1_body < 0.30 and bull and c > bar2_mid)
-            patterns['EVENING_STAR'] = (c2 > o2 and mid1_body < 0.30 and bear and c < bar2_mid)
-            patterns['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
-            patterns['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50 and (abs(c2 - o2) / ((float(df['high'].iloc[i-2]) - float(df['low'].iloc[i-2])) or 1)) > 0.50)
-        for p in ['HAMMER','INVERTED_HAMMER','BULL_ENGULFING','PIERCING_LINE','MORNING_STAR','THREE_WHITE_SOLDIERS','TWEEZER_BOTTOM','BULL_MARUBOZU']:
-            if patterns.get(p):
-                pts = {'BULL_ENGULFING':6,'MORNING_STAR':7,'THREE_WHITE_SOLDIERS':6,'BULL_MARUBOZU':5,'HAMMER':5,'PIERCING_LINE':4,'TWEEZER_BOTTOM':4,'INVERTED_HAMMER':3}
-                buy_bonus += pts.get(p, 3)
-        for p in ['SHOOTING_STAR','HANGING_MAN','BEAR_ENGULFING','DARK_CLOUD_COVER','EVENING_STAR','THREE_BLACK_CROWS','TWEEZER_TOP','BEAR_MARUBOZU']:
-            if patterns.get(p):
-                pts = {'BEAR_ENGULFING':6,'EVENING_STAR':7,'THREE_BLACK_CROWS':6,'BEAR_MARUBOZU':5,'SHOOTING_STAR':5,'DARK_CLOUD_COVER':4,'TWEEZER_TOP':4,'HANGING_MAN':3}
-                sell_bonus += pts.get(p, 3)
-        if patterns.get('DOJI') or patterns.get('SPINNING_TOP'):
-            buy_bonus -= 8.0
-            sell_bonus -= 8.0
-    except Exception as e:
-        logger.debug(f"Candle pattern error: {e}")
-    return patterns, buy_bonus, sell_bonus
-
 # ==================== BACKTEST ENGINE ====================
 class BacktestEngine:
-    def __init__(self, strategies_dict, trading_mode='INTRADAY', target_pct=None, stoploss_pct=None):
+    def __init__(self, strategies_dict, trading_mode='INTRADAY', target_pct=None, stoploss_pct=None, min_hold_days=None):
         self.strategies_dict = strategies_dict
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.results = None
+        # Minimum number of *calendar* days a DELIVERY/CNC position must be
+        # held before TARGET/STOP_LOSS can close it. Real CNC positions
+        # settle T+1 and are meant to be swing/investment holds, not same-
+        # session flips — without this the backtest was happily opening and
+        # closing the same symbol multiple times a day even in "Delivery"
+        # mode, which isn't how a real CNC account behaves. Controlled from
+        # the UI (Backtest tab); ignored for INTRADAY, which has its own
+        # 15:15 same-day square-off logic instead.
+        try:
+            mhd = int(min_hold_days) if min_hold_days is not None else 1
+        except (TypeError, ValueError):
+            mhd = 1
+        self.min_hold_days = max(0, min(30, mhd)) if self.trading_mode == 'DELIVERY' else 0
         # Target/SL come from the caller (UI-configured, per trading mode —
         # see UserManager.get_user_risk_config / /api/backtest/run) rather
         # than being fixed here. Fall back to sane per-mode defaults only if
@@ -3932,15 +3579,27 @@ class BacktestEngine:
         if from_date and to_date:
             start = datetime.fromisoformat(from_date)
             end = datetime.fromisoformat(to_date)
+            if end.time() == datetime.min.time():
+                end = end.replace(hour=23, minute=59, second=59)
+            end = min(end, datetime.now())
         else:
             end = datetime.now()
             start = end - timedelta(days=30)
 
-        margin_pct = 1.0 if self.trading_mode == 'DELIVERY' else 0.2
+        logger.info("=" * 60)
+        logger.info(f"BACKTEST START: {len(pinned_stocks)} stocks, {len(self.strategies_dict)} strategies")
+        strategy_names = list(self.strategies_dict.keys())
+        logger.info(f"  Strategies: {', '.join(strategy_names[:5])}{' ...' if len(strategy_names)>5 else ''}")
+        logger.info(f"  Date range: {start} -> {end}  |  Mode: {self.trading_mode}")
+        logger.info(f"  Target: {self.target_pct*100:.2f}%  |  Stop Loss: {self.stoploss_pct*100:.2f}%")
+        logger.info(f"  Initial Wallet: Rs {initial_wallet:,.2f}")
+        logger.info("=" * 60)
 
+        margin_pct = 1.0 if self.trading_mode == 'DELIVERY' else 0.2
         trades = []
         wallet = initial_wallet
         positions = {}
+        max_open_pos = PaperTradingEngine.MAX_OPEN_POS
 
         def _release(pos_sym, position, exit_price, reason, close_time):
             t = self._close_trade(pos_sym, position, exit_price, reason, close_time)
@@ -3951,125 +3610,232 @@ class BacktestEngine:
             return t
 
         total_syms = len(pinned_stocks)
+        vote_threshold = max(2, int(len(self.strategies_dict) * 0.3))
+        logger.info(f"Vote threshold set to {vote_threshold} (based on {len(self.strategies_dict)} strategies)")
+
+        min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
+        logger.info(f"Min-bar gate set to {min_bars_needed}")
+
+        symbol_data = {}
         for _sym_idx, sym in enumerate(pinned_stocks):
             if progress_cb:
                 try:
                     progress_cb(done=_sym_idx, total=total_syms, current=sym)
                 except Exception:
                     pass
+
             if sym not in symbol_map:
+                logger.debug(f"SKIP {sym}: not in symbol_map")
                 continue
+
             token = symbol_map[sym]['token']
             try:
                 _hist_limiter.wait(f"backtest {sym}")
                 data = kite.historical_data(token, start, end, "5minute")
-                if not data or len(data) < 20:
+                if data:
+                    _first_dt = data[0].get('date')
+                    _last_dt = data[-1].get('date')
+                    logger.info(
+                        f"FETCHED {sym}: {len(data)} bars  "
+                        f"[{_first_dt} -> {_last_dt}]  (requested {start} -> {end})"
+                    )
+                else:
+                    logger.info(f"FETCHED {sym}: 0 bars returned  (requested {start} -> {end})")
+
+                if not data or len(data) < min_bars_needed:
+                    logger.debug(
+                        f"SKIP {sym}: insufficient data "
+                        f"({len(data) if data else 0} bars, need >= {min_bars_needed})"
+                    )
                     continue
+
                 df = pd.DataFrame(data)
                 ind = Indicators.calculate_all(df)
-                for i in range(20, len(df)):
-                    df_slice = df.iloc[:i+1]
-                    ind_slice = ind.iloc[:i+1]
-                    if len(df_slice) < 60:
-                        continue
-                    current_bar = df_slice.iloc[-1]
-                    ltp = current_bar['close']
-                    bar_time = current_bar['date'] if 'date' in current_bar else current_bar.get('date', datetime.now())
-                    try:
-                        bar_dt = bar_time if isinstance(bar_time, datetime) else pd.to_datetime(bar_time).to_pydatetime()
-                        bar_mins = bar_dt.hour * 60 + bar_dt.minute
-                    except Exception:
-                        bar_mins = 0
-                    if sym in positions:
-                        pos = positions[sym]
-                        # INTRADAY: force square-off by 15:15 — never hold a position overnight
-                        if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
-                            _release(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time)
-                            del positions[sym]
-                            continue
-                        if pos['side'] == 'BUY':
-                            if ltp >= pos['target']:
-                                _release(sym, pos, ltp, 'TARGET', bar_time)
-                                del positions[sym]
-                            elif ltp <= pos['stoploss']:
-                                _release(sym, pos, ltp, 'STOP_LOSS', bar_time)
-                                del positions[sym]
-                        else:
-                            if ltp <= pos['target']:
-                                _release(sym, pos, ltp, 'TARGET', bar_time)
-                                del positions[sym]
-                            elif ltp >= pos['stoploss']:
-                                _release(sym, pos, ltp, 'STOP_LOSS', bar_time)
-                                del positions[sym]
-                        continue
-
-                    if self.trading_mode == 'INTRADAY' and (
-                        bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER or not _in_trade_slot(bar_mins)
-                    ):
-                        continue
-
-                    df_w = df_slice.iloc[-60:].reset_index(drop=True)
-                    ind_w = ind_slice.iloc[-60:].reset_index(drop=True)
-                    b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
-                    if b > s and b > 20:
-                        price = ltp
-                        atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
-                        if atr and atr > 0:
-                            target, stoploss = self._calculate_atr_targets(price, atr, 'BUY')
-                        else:
-                            target = price * (1 + self.target_pct)
-                            stoploss = price * (1 - self.stoploss_pct)
-                        margin_per_share = price * margin_pct
-                        qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
-                        if qty > 0:
-                            positions[sym] = {
-                                'side': 'BUY',
-                                'entry_price': price,
-                                'qty': qty,
-                                'target': target,
-                                'stoploss': stoploss,
-                                'entry_time': bar_time,
-                            }
-                            wallet -= price * qty * margin_pct
-                    elif s > b and s > 20:
-                        price = ltp
-                        atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
-                        if atr and atr > 0:
-                            target, stoploss = self._calculate_atr_targets(price, atr, 'SELL')
-                        else:
-                            target = price * (1 - self.target_pct)
-                            stoploss = price * (1 + self.stoploss_pct)
-                        margin_per_share = price * margin_pct
-                        qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
-                        if qty > 0:
-                            positions[sym] = {
-                                'side': 'SELL',
-                                'entry_price': price,
-                                'qty': qty,
-                                'target': target,
-                                'stoploss': stoploss,
-                                'entry_time': bar_time,
-                            }
-                            wallet -= price * qty * margin_pct
-                for sym, pos in list(positions.items()):
-                    last_price = float(df['close'].iloc[-1])
-                    _release(sym, pos, last_price, 'DATA_END', pos.get('entry_time'))
-                    del positions[sym]
+                dt_series = pd.to_datetime(df['date']) if 'date' in df.columns else pd.to_datetime(df.index.to_series().reset_index(drop=True))
+                symbol_data[sym] = {'df': df, 'ind': ind, 'dt': dt_series}
+                logger.debug(f"Processing {sym}: {len(df)} bars, indicators loaded")
             except Exception as e:
-                logger.error(f"Backtest error on {sym}: {e}")
+                logger.error(f"Backtest fetch error on {sym}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+        events = []
+        _loop_start = max(0, min_bars_needed - 1)
+        for sym, sd in symbol_data.items():
+            for i in range(_loop_start, len(sd['df'])):
+                events.append((sd['dt'].iloc[i], sym, i))
+        events.sort(key=lambda e: (e[0], e[1]))
+
+        logger.info(
+            f"Merged timeline: {len(events)} bar-events across {len(symbol_data)} symbols  "
+            f"|  Global open-position cap = {max_open_pos} (matches live MAX_OPEN_POS)"
+        )
+
+        vote_log_count = {}
+        for bar_time, sym, i in events:
+            sd = symbol_data[sym]
+            df, ind, dt_series = sd['df'], sd['ind'], sd['dt']
+            df_slice = df.iloc[:i+1]
+            ind_slice = ind.iloc[:i+1]
+            if len(df_slice) < min_bars_needed:
+                continue
+
+            current_bar = df_slice.iloc[-1]
+            ltp = float(current_bar['close'])
+            bar_high = float(current_bar['high'])
+            bar_low = float(current_bar['low'])
+            try:
+                bar_dt = bar_time if isinstance(bar_time, datetime) else pd.to_datetime(bar_time).to_pydatetime()
+                bar_mins = bar_dt.hour * 60 + bar_dt.minute
+            except Exception:
+                bar_dt = datetime.now()
+                bar_mins = 0
+
+            if sym in positions:
+                pos = positions[sym]
+                if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
+                    _release(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time)
+                    del positions[sym]
+                    logger.debug(f"  {sym} sq-off at {bar_dt.strftime('%H:%M')}")
+                    continue
+                if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
+                    days_held = (bar_dt.date() - pos['entry_date']).days
+                    if days_held < self.min_hold_days:
+                        continue
+
+                exit_price = None
+                exit_reason = None
+                if pos['side'] == 'BUY':
+                    if bar_low <= pos['stoploss']:
+                        exit_price = pos['stoploss']
+                        exit_reason = 'STOP_LOSS'
+                    elif bar_high >= pos['target']:
+                        exit_price = pos['target']
+                        exit_reason = 'TARGET'
+                else:
+                    if bar_high >= pos['stoploss']:
+                        exit_price = pos['stoploss']
+                        exit_reason = 'STOP_LOSS'
+                    elif bar_low <= pos['target']:
+                        exit_price = pos['target']
+                        exit_reason = 'TARGET'
+
+                if exit_price is not None:
+                    _release(sym, pos, exit_price, exit_reason, bar_time)
+                    del positions[sym]
+                    logger.debug(
+                        f"  {sym} {pos['side']} {exit_reason} hit at "
+                        f"{bar_dt.strftime('%Y-%m-%d %H:%M')} "
+                        f"(bar H={bar_high:.2f} L={bar_low:.2f}) "
+                        f"P&L={trades[-1]['pnl']:.2f}"
+                    )
+                continue
+
+            if len(positions) >= max_open_pos:
+                continue
+
+            if self.trading_mode == 'INTRADAY' and (
+                bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER or not _in_trade_slot(bar_mins)
+            ):
+                continue
+
+            df_w = df_slice.iloc[-min_bars_needed:].reset_index(drop=True)
+            ind_w = ind_slice.iloc[-min_bars_needed:].reset_index(drop=True)
+            b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
+
+            vlc = vote_log_count.get(sym, 0)
+            if vlc < 60:
+                logger.debug(
+                    f"  {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
+                    f"b={b:.1f}  s={s:.1f}  (threshold={vote_threshold})"
+                )
+                vote_log_count[sym] = vlc + 1
+
+            side = None
+            if b > s and b >= vote_threshold:
+                side = 'BUY'
+            elif s > b and s >= vote_threshold and self.trading_mode != 'DELIVERY':
+                side = 'SELL'
+            if side is None:
+                continue
+
+            gap_ok = True
+            try:
+                dt_slice = dt_series.iloc[:i+1]
+                today_mask = (dt_slice.dt.date == bar_dt.date()).values
+                yesterday_prices = df_slice.loc[~today_mask, 'close']
+                if len(yesterday_prices) > 0:
+                    prev_close = float(yesterday_prices.iloc[-1])
+                    if prev_close > 0:
+                        gap_pct = (ltp - prev_close) / prev_close * 100
+                        if side == 'BUY' and gap_pct > 1.5:
+                            gap_ok = False
+                        if side == 'SELL' and gap_pct < -1.5:
+                            gap_ok = False
+            except Exception:
+                gap_ok = True
+            if not gap_ok:
+                continue
+
+            price = ltp
+            atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
+            if atr and atr > 0:
+                target, stoploss = self._calculate_atr_targets(price, atr, side)
+            elif side == 'BUY':
+                target = price * (1 + self.target_pct)
+                stoploss = price * (1 - self.stoploss_pct)
+            else:
+                target = price * (1 - self.target_pct)
+                stoploss = price * (1 + self.stoploss_pct)
+
+            margin_per_share = price * margin_pct
+            qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
+            if qty <= 0:
+                logger.debug(f"  {sym} {side} signal but qty=0 (wallet={wallet:.2f}, margin_per_share={margin_per_share:.2f})")
+                continue
+
+            positions[sym] = {
+                'side': side,
+                'entry_price': price,
+                'qty': qty,
+                'target': target,
+                'stoploss': stoploss,
+                'entry_time': bar_time,
+                'entry_date': bar_dt.date(),
+            }
+            wallet -= price * qty * margin_pct
+            logger.info(
+                f"BACKTEST {side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  price={price:.2f}  qty={qty}  "
+                f"b={b:.1f}  s={s:.1f}  target={target:.2f}  sl={stoploss:.2f}  open={len(positions)}/{max_open_pos}"
+            )
+
+        for sym, pos in list(positions.items()):
+            df = symbol_data[sym]['df']
+            last_price = float(df['close'].iloc[-1])
+            last_time = df['date'].iloc[-1] if 'date' in df.columns else datetime.now()
+            _release(sym, pos, last_price, 'DATA_END', last_time)
+            logger.debug(f"  {sym} closed at end of data: P&L={trades[-1]['pnl']:.2f}")
+            del positions[sym]
 
         total_trades = len(trades)
         if total_trades == 0:
+            logger.info("BACKTEST COMPLETE: No trades executed.")
             return {
                 'total_trades': 0, 'win_rate': 0, 'net_pnl': 0, 'trades': [],
                 'final_wallet': initial_wallet, 'mode': self.trading_mode,
                 'target_pct': round(self.target_pct * 100, 2),
                 'stoploss_pct': round(self.stoploss_pct * 100, 2),
+                'min_hold_days': self.min_hold_days,
             }
+
         wins = sum(1 for t in trades if t['pnl'] > 0)
         net_pnl = sum(t['pnl'] for t in trades)
         win_rate = wins / total_trades * 100 if total_trades > 0 else 0
         final_wallet = initial_wallet + net_pnl
+
+        logger.info(f"BACKTEST COMPLETE: {total_trades} trades, win rate {win_rate:.1f}%, net P&L Rs {net_pnl:.2f}")
+        logger.info("=" * 60)
+
         return {
             'total_trades': total_trades,
             'win_trades': wins,
@@ -4081,6 +3847,7 @@ class BacktestEngine:
             'mode': self.trading_mode,
             'target_pct': round(self.target_pct * 100, 2),
             'stoploss_pct': round(self.stoploss_pct * 100, 2),
+            'min_hold_days': self.min_hold_days,
         }
 
     def _close_trade(self, sym, pos, exit_price, reason, exit_time=None):
@@ -4405,6 +4172,17 @@ def run_backtest():
     if not (0 < stoploss_pct_ui <= 20):
         stoploss_pct_ui = default_sl_ui
 
+    # Minimum hold (calendar days) before a DELIVERY/CNC position can be
+    # closed by TARGET/STOP_LOSS — user-controlled from the Backtest tab
+    # (per-run override), falling back to the saved Settings value.
+    # Meaningless for INTRADAY (forced to 0 inside BacktestEngine).
+    default_mhd = risk_config.get('min_hold_days_delivery', 1)
+    try:
+        min_hold_days = int(data.get('min_hold_days')) if data.get('min_hold_days') not in (None, '') else default_mhd
+    except (TypeError, ValueError):
+        min_hold_days = default_mhd
+    min_hold_days = max(0, min(30, min_hold_days))
+
     kite = UserManager.get_kite(user_id)
     pe = UserManager.get_paper_engine(user_id)
     strategy_name, strategies_dict = UserManager.get_user_strategy(user_id)
@@ -4422,7 +4200,8 @@ def run_backtest():
     # docstring for why: a wide date range can take well over nginx's
     # default proxy_read_timeout and surface as a 504 even on success.
     backtest = BacktestEngine(strategies_dict, trading_mode=mode,
-                               target_pct=target_pct_ui / 100.0, stoploss_pct=stoploss_pct_ui / 100.0)
+                               target_pct=target_pct_ui / 100.0, stoploss_pct=stoploss_pct_ui / 100.0,
+                               min_hold_days=min_hold_days)
     UserManager._backtest_engines[user_id] = backtest
     result = backtest.run_async(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
     return jsonify(result)
@@ -4975,16 +4754,22 @@ def gen_paper_tab(pe):
         '</div></div>'
     )
     mode_label = 'CNC/Delivery' if pe.trading_mode == 'DELIVERY' else 'Intraday'
+    # SqOff time and the 9:15-14:00 trade-slot window are INTRADAY-only
+    # concepts (they exist to guarantee time to exit before the 15:15
+    # square-off). CNC/Delivery has no forced exit, so the banner must not
+    # claim either applies to it.
+    if pe.trading_mode == 'DELIVERY':
+        mode_window_txt = 'No forced square-off · Entries allowed 9:30–15:30'
+    else:
+        mode_window_txt = 'SqOff 15:15 · Trading Window: 9:15–14:00 ⭐⭐⭐⭐⭐'
     banner = (
         '<div class="pt-banner">'
         '<div style="font-size:20px;color:var(--gold);flex-shrink:0;padding-top:2px"><i class="fas fa-robot"></i></div>'
         '<div style="flex:1;min-width:0">'
-        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.7 — Fixed Backtest UI Persistence</div>'
+        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.8 — Strategy-Agnostic Scoring</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5">'
-        '70% wallet · ATR risk sizing (1%/trade) · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · SqOff 15:15 · '
-        'Trading Window: 9:15–14:00 ⭐⭐⭐⭐⭐ · '
-        'Score≥35 · Vote≥50% · Layers≥2 · Vol≥1.3× · ST advisory · HTF advisory · '
-        'DualConflict→Score≥42'
+        '70% wallet · ATR risk sizing (1%/trade) · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · ' + mode_window_txt + ' · '
+        'Score≥35 · Vote≥50% · Vol≥1.3×'
         '</div></div>'
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;width:100%">'
         '<span class="b bg-gold"><i class="fas fa-thumbtack"></i> ' + str(len(pe.data['pinned'])) + ' Pinned</span>'
@@ -5200,6 +4985,7 @@ var _backtestToDate = '';
 var _backtestMode = CURRENT_MODE || 'INTRADAY';
 var _backtestTargetPct = null;
 var _backtestSlPct = null;
+var _backtestMinHoldDays = (typeof CURRENT_RISK !== 'undefined' && CURRENT_RISK.min_hold_days_delivery != null) ? CURRENT_RISK.min_hold_days_delivery : 1;
 var _backtestRunning = false;
 var _backtestResults = null;
 var _backtestPollTimer = null;
@@ -5321,11 +5107,15 @@ function loadPTData(){
         _lastOrderCount=d.order_count||0;
         ptData=d;
         renderPTSummaryCards(d);
-        // Only re-render the tab content if it is NOT the Settings tab
-        if (ptTab !== 'settings') {
+        // Only re-render the tab content if it is NOT the Settings or
+        // Backtest tab. Both hold live user-editable form inputs — Backtest
+        // in particular has a native <input type="date">, whose calendar
+        // popup gets silently closed if the whole tab's innerHTML is
+        // replaced out from under it mid-interaction by this 5s refresh.
+        if (ptTab !== 'settings' && ptTab !== 'backtest') {
             renderPTTab(ptTab);
         }
-        // If settings tab is active, do NOT re-render it – keep user input intact
+        // If settings/backtest tab is active, do NOT re-render it – keep user input (and any open date picker) intact
     }).catch(err=>console.error('[PT]',err));
 }
 
@@ -5380,13 +5170,15 @@ function saveRiskConfig(){
     var slIntraday = document.getElementById('slIntraday').value;
     var targetDelivery = document.getElementById('targetDelivery').value;
     var slDelivery = document.getElementById('slDelivery').value;
+    var minHoldDelivery = document.getElementById('minHoldDelivery').value;
     var status = document.getElementById('riskStatus');
     status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Saving...</span>';
     var payload = {
         target_pct_intraday: targetIntraday,
         stoploss_pct_intraday: slIntraday,
         target_pct_delivery: targetDelivery,
-        stoploss_pct_delivery: slDelivery
+        stoploss_pct_delivery: slDelivery,
+        min_hold_days_delivery: minHoldDelivery
     };
     fetch('/api/user/update-risk', {
         method: 'POST',
@@ -5459,7 +5251,14 @@ function renderPTSettings(el){
                             <label style="display:block;font-size:10px;color:var(--red);margin-bottom:4px;">Delivery/CNC Stop Loss %</label>
                             <input type="number" id="slDelivery" value="${CURRENT_RISK.stoploss_pct_delivery}" step="0.1" min="0.1" max="20" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
                         </div>
+                        <div>
+                            <label style="display:block;font-size:10px;color:var(--gold);margin-bottom:4px;">CNC Min Hold (days)</label>
+                            <input type="number" id="minHoldDelivery" value="${CURRENT_RISK.min_hold_days_delivery}" step="1" min="0" max="30" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                        </div>
                     </div>
+                    <p style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5;">
+                        <b>CNC Min Hold</b> also applies live — the monitor loop won't auto-exit a Delivery position on TARGET/STOP_LOSS until it's been held this many calendar days. The manual Exit button always works regardless.
+                    </p>
                     <button class="btn btn-gold" onclick="saveRiskConfig()" style="width:100%;justify-content:center;padding:8px;margin-top:12px;"><i class="fas fa-save"></i> Save Target/Stop Loss</button>
                     <div id="riskStatus" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;"></div>
                 </div>
@@ -5566,6 +5365,7 @@ function renderPTBacktest(el) {
     var mode = _backtestMode || CURRENT_MODE || 'INTRADAY';
     var targetPct = _backtestTargetPct !== null ? _backtestTargetPct : '';
     var slPct = _backtestSlPct !== null ? _backtestSlPct : '';
+    var minHoldDays = _backtestMinHoldDays != null ? _backtestMinHoldDays : 1;
     var running = _backtestRunning;
     var results = _backtestResults;
     
@@ -5602,7 +5402,14 @@ function renderPTBacktest(el) {
                         <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Stop Loss % (override)</label>
                         <input type="number" id="backtestSlPct" value="${slPct}" step="0.1" min="0.1" max="20" placeholder="Saved" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
                     </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:var(--gold);margin-bottom:4px;">Min Hold Days (CNC only)</label>
+                        <input type="number" id="backtestMinHoldDays" value="${minHoldDays}" step="1" min="0" max="30" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
+                    </div>
                 </div>
+                <p style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5;">
+                    <b>Min Hold Days</b> blocks TARGET/STOP_LOSS exits on a Delivery/CNC position until it has been held this many calendar days — mirrors real swing/investment behavior instead of same-session flips. Ignored in Intraday mode. Set to 0 to allow same-day exits.
+                </p>
                 <button class="btn btn-p" onclick="runBacktest()" id="backtestRunBtn" style="width:100%;justify-content:center;padding:10px;margin-top:12px;" ${running?'disabled':''}>
                     <i class="fas fa-play"></i> ${running?'Running...':'Run Backtest'}
                 </button>
@@ -5646,7 +5453,7 @@ function renderPTBacktest(el) {
     }).catch(()=>{});
 
     // Event listeners to remember values
-    ['backtestWallet','backtestFromDate','backtestToDate','backtestMode','backtestTargetPct','backtestSlPct'].forEach(id => {
+    ['backtestWallet','backtestFromDate','backtestToDate','backtestMode','backtestTargetPct','backtestSlPct','backtestMinHoldDays'].forEach(id => {
         var el2 = document.getElementById(id);
         if (el2) {
             el2.addEventListener('change', function() {
@@ -5656,11 +5463,13 @@ function renderPTBacktest(el) {
                 else if (id === 'backtestMode') _backtestMode = this.value;
                 else if (id === 'backtestTargetPct') _backtestTargetPct = this.value ? parseFloat(this.value) : null;
                 else if (id === 'backtestSlPct') _backtestSlPct = this.value ? parseFloat(this.value) : null;
+                else if (id === 'backtestMinHoldDays') _backtestMinHoldDays = this.value !== '' ? parseInt(this.value) : 1;
             });
             el2.addEventListener('input', function() {
                 if (id === 'backtestWallet') _backtestWallet = parseFloat(this.value) || 100000;
                 else if (id === 'backtestTargetPct') _backtestTargetPct = this.value ? parseFloat(this.value) : null;
                 else if (id === 'backtestSlPct') _backtestSlPct = this.value ? parseFloat(this.value) : null;
+                else if (id === 'backtestMinHoldDays') _backtestMinHoldDays = this.value !== '' ? parseInt(this.value) : 1;
             });
         }
     });
@@ -5677,17 +5486,31 @@ function _displayBacktestResults(res){
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Net P&L</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.net_pnl>=0?'var(--green)':'var(--red)'};">${res.net_pnl>=0?'+':''}₹${res.net_pnl.toFixed(2)}</span></div>
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Final Wallet</span><br><span style="font-family:Space Mono;font-size:16px;color:var(--gold);">₹${res.final_wallet.toFixed(2)}</span></div>
     `;
-    var modeBadge = '<div style="margin-bottom:10px;font-size:10px;color:var(--text3);font-family:Space Mono,monospace">Mode: <span class="b bg-gold">'+modeLabel+'</span></div>';
-    function _fmtTime(iso){
+    var mhdBadge = (res.mode==='DELIVERY' && res.min_hold_days!=null) ? ' <span class="b bn">Min Hold: '+res.min_hold_days+'d</span>' : '';
+    var modeBadge = '<div style="margin-bottom:10px;font-size:10px;color:var(--text3);font-family:Space Mono,monospace">Mode: <span class="b bg-gold">'+modeLabel+'</span>'+mhdBadge+'</div>';
+    function _fmtDateTime(iso){
         if(!iso) return '—';
         var d = new Date(iso);
-        if(isNaN(d.getTime())) return String(iso).slice(11,16) || '—';
-        return d.toTimeString().slice(0,5);
+        if(isNaN(d.getTime())){
+            var s = String(iso);
+            return s.length>=16 ? s.slice(0,10)+' '+s.slice(11,16) : (s || '—');
+        }
+        var pad=n=>String(n).padStart(2,'0');
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
     }
     if(res.trades && res.trades.length){
-        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
+        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
         res.trades.forEach(t=>{
-            html+=`<tr><td class="num">${t.date||'—'}</td><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+            var entryDt = new Date(t.entry_time);
+            var exitDt = new Date(t.exit_time);
+            var heldTxt = '—';
+            if(!isNaN(entryDt.getTime()) && !isNaN(exitDt.getTime())){
+                var ms = exitDt - entryDt;
+                var days = Math.floor(ms/86400000);
+                var hrs = Math.floor((ms%86400000)/3600000);
+                heldTxt = days>0 ? days+'d '+hrs+'h' : hrs+'h';
+            }
+            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
         });
         html+='</tbody></table>';
         tradesDiv.innerHTML=html;
@@ -5704,6 +5527,7 @@ function runBacktest(){
     var mode = document.getElementById('backtestMode') ? document.getElementById('backtestMode').value : (CURRENT_MODE||'INTRADAY');
     var targetPct = document.getElementById('backtestTargetPct').value;
     var slPct = document.getElementById('backtestSlPct').value;
+    var minHoldDaysInput = document.getElementById('backtestMinHoldDays') ? document.getElementById('backtestMinHoldDays').value : '1';
     var status = document.getElementById('backtestStatus');
     var runBtn = document.getElementById('backtestRunBtn');
     if (!fromDate || !toDate) {
@@ -5721,11 +5545,12 @@ function runBacktest(){
     else _backtestTargetPct = null;
     if (slPct !== '') _backtestSlPct = parseFloat(slPct);
     else _backtestSlPct = null;
+    _backtestMinHoldDays = minHoldDaysInput !== '' ? parseInt(minHoldDaysInput) : 1;
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
     status.innerHTML='<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Starting backtest...</span>';
     document.getElementById('backtestResults').style.display='none';
     
-    var payload = {wallet: wallet, from_date: fromDate, to_date: toDate, mode: mode};
+    var payload = {wallet: wallet, from_date: fromDate, to_date: toDate, mode: mode, min_hold_days: _backtestMinHoldDays};
     if (_backtestTargetPct !== null) payload.target_pct = _backtestTargetPct;
     if (_backtestSlPct !== null) payload.stoploss_pct = _backtestSlPct;
     
@@ -6731,13 +6556,13 @@ SYMBOL_MAP = {}
 def main():
     UserManager.load_users()
     print("\n" + "=" * 65)
-    print("  ALPHA SCANNER PRO  v9.7  — Fixed Backtest UI Persistence")
+    print("  ALPHA SCANNER PRO  v9.8  — Strategy-Agnostic Scoring")
     print("=" * 65)
     print("  Visit http://<your-vps-ip>:5000 to login")
     print("  Redirect URL must be set to https://rahulintratrading.online/api/broker/callback")
     print("=" * 65)
     print("  🧠 Available strategies: " + ", ".join(AVAILABLE_STRATEGIES.keys()))
-    print("  📈 Backtest UI now persists across refreshes.")
+    print("  📈 All strategies use pure vote-based scoring (no strategy-specific panels)")
     print("  📊 Signal logs auto‑delete after 5000 entries.")
     print("=" * 65)
     app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
