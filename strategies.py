@@ -31,7 +31,26 @@ _STRATEGY_SOURCE_MODULE = {}
 def _load_module_from_file(module_name, file_path):
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # CRITICAL: module_from_spec()+exec_module() does NOT register the module
+    # in sys.modules the way importlib.import_module() does. Without this
+    # line, ultimate_scanner.py's _get_strategy_min_bars() — which looks a
+    # strategy function's module up via sys.modules.get(fn.__module__) — can
+    # never find modules loaded from this function (i.e. every strategy file
+    # sitting directly next to ultimate_scanner.py, as opposed to inside the
+    # strategies/ subfolder, which goes through import_module() and got this
+    # registration for free). That silently broke each such module's
+    # MIN_BARS_REQUIRED override, falling back to the 160-bar default even
+    # for strategies (like ORB) that declare a much smaller requirement —
+    # which in turn made single/short-day backtests skip every candidate bar
+    # for that strategy (since a session only has ~75 5-min bars).
+    sys.modules[module_name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        # Don't leave a half-initialized module registered under this name
+        # if exec_module blew up partway through.
+        sys.modules.pop(module_name, None)
+        raise
     return mod
 
 def _validate_module(name, mod):

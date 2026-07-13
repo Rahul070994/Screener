@@ -242,14 +242,14 @@ _seen = set()
 NIFTY200_SYMBOLS = [s for s in NIFTY200_SYMBOLS if not (s in _seen or _seen.add(s))]
 
 TRADE_SLOTS = [
-    (9*60+15,  14*60+0),
+    (9*60+15,  14*60+30),
 ]
 
 def _in_trade_slot(mins: int) -> bool:
     return any(start <= mins <= end for start, end in TRADE_SLOTS)
 
 def _slot_label(mins: int) -> str:
-    if   9*60+15  <= mins <= 14*60+0:  return "SLOT-1 (9:15–14:00 Trading Window)"
+    if   9*60+15  <= mins <= 14*60+30:  return "SLOT-1 (9:15–14:30 Trading Window)"
     elif mins < 9*60+15:               return "PRE-MARKET"
     else:                              return "CLOSED"
 
@@ -540,7 +540,7 @@ def get_nifty_data(kite):
             256265,
             datetime.now() - timedelta(days=1),
             datetime.now(),
-            "5minute",
+            "3minute",
         )
         if data and len(data) > 5:
             df  = pd.DataFrame(data)
@@ -1037,8 +1037,8 @@ class FullScanner:
 
             min_bars_needed = _get_strategy_min_bars(paper_engine.strategies_dict)
 
-            _hist_limiter.wait(f"5min {sym}")
-            data5 = kite.historical_data(token, start5, end, "5minute")
+            _hist_limiter.wait(f"3min {sym}")
+            data5 = kite.historical_data(token, start5, end, "3minute")
             if not data5 or len(data5) < min_bars_needed:
                 return None
 
@@ -1346,7 +1346,7 @@ class PaperTradingEngine:
     STOPLOSS_PCT_DELIVERY_DEFAULT_UI = 1.5
     INTRADAY_MARGIN_PCT = 0.20
     MAX_OPEN_POS = 1
-    WALLET_USAGE_PCT = 0.70
+    WALLET_USAGE_PCT = 0.80
     MIN_PRICE = 100.0
     SLIPPAGE_PCT = 0.001
     MIN_ABSOLUTE_MOVE = 0.50
@@ -1355,7 +1355,6 @@ class PaperTradingEngine:
     MAX_DAILY_LOSS_PCT = 0.05
     MAX_DAILY_PROFIT_PCT = 0.02
     MAX_CONSECUTIVE_LOSSES = 3
-    MAX_POSITION_HOLD_MINUTES = 180
     COOLDOWN_MINUTES = 5
     CIRCUIT_BREAKER_THRESHOLD = 0.10
     MARKET_OPEN = 555
@@ -1968,15 +1967,6 @@ class PaperTradingEngine:
         else:
             qty = margin_qty
 
-        if qty < 1:
-            return 0, 0.0, margin_pct, source
-        h = signal_time.hour
-        m = signal_time.minute
-        slot_mins = h * 60 + m
-        if 14*60+0 <= slot_mins <= 15*60+30:
-            qty = int(qty * 0.75)
-        elif 12*60+30 < slot_mins < 14*60+0:
-            qty = int(qty * 0.25)
         if qty < 1:
             return 0, 0.0, margin_pct, source
         margin_used = round(qty * margin_per_share, 2)
@@ -2595,12 +2585,12 @@ class PaperTradingEngine:
 
             min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
 
-            _hist_limiter.wait(f"5min {symbol}")
+            _hist_limiter.wait(f"3min {symbol}")
             data5 = kite.historical_data(
                 SYMBOL_MAP[symbol]["token"],
                 now - timedelta(days=6),
                 now,
-                "5minute",
+                "3minute",
             )
             if not data5 or len(data5) < min_bars_needed:
                 self._log_diag(
@@ -2881,18 +2871,7 @@ class PaperTradingEngine:
                             self._save()
                         return
 
-                    if self.trading_mode == 'INTRADAY' and held_mins > self.MAX_POSITION_HOLD_MINUTES:
-                        el = log_entry.copy()
-                        el.update(
-                            {
-                                "status": "EXIT_MAX_HOLD",
-                                "reason": f"Max hold {held_mins:.0f}m",
-                            }
-                        )
-                        self._add_signal_log(el)
-                        self._close_position_nolock(symbol, reason="MAX_HOLD_TIME")
-                        self._save()
-                        return
+                    
 
                     self._save()
                     return
@@ -3399,7 +3378,7 @@ class SectorMonitor:
             end = datetime.now()
             start = end - timedelta(hours=1)
             _hist_limiter.wait(f"sector {sector}")
-            data = self.paper_engine._kite.historical_data(token, start, end, "5minute")
+            data = self.paper_engine._kite.historical_data(token, start, end, "3minute")
             if not data or len(data) < 5:
                 return None
 
@@ -3465,7 +3444,7 @@ class SectorMonitor:
         token = SYMBOL_MAP[best_stock]['token']
         try:
             _hist_limiter.wait(f"sector_trade {best_stock}")
-            data = self.paper_engine._kite.historical_data(token, datetime.now() - timedelta(days=3), datetime.now(), "5minute")
+            data = self.paper_engine._kite.historical_data(token, datetime.now() - timedelta(days=3), datetime.now(), "3minute")
             if not data or len(data) < 80:
                 logger.warning(f"Sector trade: insufficient data for {best_stock}")
                 return
@@ -3490,10 +3469,20 @@ class SectorMonitor:
 
 # ==================== BACKTEST ENGINE ====================
 class BacktestEngine:
-    def __init__(self, strategies_dict, trading_mode='INTRADAY', target_pct=None, stoploss_pct=None, min_hold_days=None):
+    def __init__(self, strategies_dict, trading_mode='INTRADAY', target_pct=None, stoploss_pct=None,
+                 min_hold_days=None, strategy_performance=None):
         self.strategies_dict = strategies_dict
         self.trading_mode = trading_mode if trading_mode in ('INTRADAY', 'DELIVERY') else 'INTRADAY'
         self.results = None
+        # Snapshot of the live paper-trading engine's per-strategy win-rate
+        # stats (PaperTradingEngine.strategy_performance) at the moment the
+        # backtest was launched. Passed straight through to _strat_votes()
+        # below so a strategy's vote weight is scaled the same way live does
+        # it (see _strategy_perf_weight) instead of always weighting 1.0 —
+        # previously backtest always used the unweighted default regardless
+        # of what live had actually learned, which was one more way the two
+        # engines could disagree on which side a signal favored.
+        self.strategy_performance = strategy_performance or {}
         # Minimum number of *calendar* days a DELIVERY/CNC position must be
         # held before TARGET/STOP_LOSS can close it. Real CNC positions
         # settle T+1 and are meant to be swing/investment holds, not same-
@@ -3519,6 +3508,12 @@ class BacktestEngine:
             self.stoploss_pct = float(stoploss_pct)
         else:
             self.stoploss_pct = 0.015 if self.trading_mode == 'DELIVERY' else 0.005
+        # Hard ceiling above the configured target/SL, mirroring
+        # PaperTradingEngine.__init__'s max_target_pct/max_sl_pct — keeps
+        # the ATR-scaled branch of _calculate_atr_targets from running away
+        # on volatile bars, same ratio (1.5x / 1.6x) as live.
+        self.max_target_pct = round(self.target_pct * 1.5, 4)
+        self.max_sl_pct = round(self.stoploss_pct * 1.6, 4)
         # A backtest walks every 5-min bar in the date range and re-evaluates
         # the full strategy vote set on each one — for a multi-week range
         # across several pinned stocks this routinely takes well past a
@@ -3599,6 +3594,7 @@ class BacktestEngine:
         trades = []
         wallet = initial_wallet
         positions = {}
+        last_exit_time = {}
         max_open_pos = PaperTradingEngine.MAX_OPEN_POS
 
         def _release(pos_sym, position, exit_price, reason, close_time):
@@ -3607,14 +3603,44 @@ class BacktestEngine:
             nonlocal wallet
             margin_used = position['entry_price'] * position['qty'] * margin_pct
             wallet += margin_used + t['pnl']
+            try:
+                last_exit_time[pos_sym] = (
+                    close_time if isinstance(close_time, datetime)
+                    else pd.to_datetime(close_time).to_pydatetime()
+                )
+            except Exception:
+                last_exit_time[pos_sym] = datetime.now()
             return t
 
         total_syms = len(pinned_stocks)
-        vote_threshold = max(2, int(len(self.strategies_dict) * 0.3))
-        logger.info(f"Vote threshold set to {vote_threshold} (based on {len(self.strategies_dict)} strategies)")
+        # Mirrors live's _check_signal() buy_ok/sell_ok gate exactly: a
+        # direction only qualifies if its share of triggered-strategy points
+        # is >= MIN_VOTE_PCT (50%) AND at least one point actually triggered
+        # in that direction. The old raw point-count threshold
+        # (max(2, 30% of strategy count)) had no percentage comparison at
+        # all, so a backtest "signal" wasn't necessarily something live
+        # would ever fire — this made backtest results not a reliable
+        # preview of live behavior.
+        min_vote_pct = PaperTradingEngine.MIN_VOTE_PCT
+        logger.info(f"Vote gate: >= {min_vote_pct:.0f}% of triggered points in one direction (matches live _check_signal)")
 
         min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
         logger.info(f"Min-bar gate set to {min_bars_needed}")
+
+        # One-time NIFTY 5-min history fetch spanning the whole backtest
+        # range, used to reproduce live's market_trend/market_regime gates
+        # (skip BREAKOUT-category strategies while the index is RANGING;
+        # block a BUY/SELL on a HEAVYWEIGHTS symbol that fights the index
+        # trend — see get_nifty_data()/_check_signal() in
+        # PaperTradingEngine) without hitting the historical-data API on
+        # every single bar-event. If the fetch fails, regime/correlation
+        # gating is simply skipped for this run — same as live's own
+        # fallback when get_nifty_data() returns None.
+        nifty_ctx = self._fetch_nifty_context(kite, start, end)
+        if nifty_ctx is not None and not nifty_ctx.empty:
+            logger.info(f"NIFTY context loaded: {len(nifty_ctx)} bars for regime/correlation gating")
+        else:
+            logger.warning("NIFTY context unavailable — regime/correlation gates disabled for this run")
 
         symbol_data = {}
         for _sym_idx, sym in enumerate(pinned_stocks):
@@ -3631,7 +3657,7 @@ class BacktestEngine:
             token = symbol_map[sym]['token']
             try:
                 _hist_limiter.wait(f"backtest {sym}")
-                data = kite.historical_data(token, start, end, "5minute")
+                data = kite.historical_data(token, start, end, "3minute")
                 if data:
                     _first_dt = data[0].get('date')
                     _last_dt = data[-1].get('date')
@@ -3693,11 +3719,15 @@ class BacktestEngine:
 
             if sym in positions:
                 pos = positions[sym]
+                exit_action = 'SELL' if pos['side'] == 'BUY' else 'BUY'
                 if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
-                    _release(sym, pos, ltp, 'EOD_SQUAREOFF', bar_time)
+                    _eod_fill = self._slip(ltp, exit_action)
+                    _eod_fill = min(_eod_fill, round(bar_high, 2)) if exit_action == 'BUY' else max(_eod_fill, round(bar_low, 2))
+                    _release(sym, pos, _eod_fill, 'EOD_SQUAREOFF', bar_time)
                     del positions[sym]
                     logger.debug(f"  {sym} sq-off at {bar_dt.strftime('%H:%M')}")
                     continue
+                
                 if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
                     days_held = (bar_dt.date() - pos['entry_date']).days
                     if days_held < self.min_hold_days:
@@ -3707,17 +3737,17 @@ class BacktestEngine:
                 exit_reason = None
                 if pos['side'] == 'BUY':
                     if bar_low <= pos['stoploss']:
-                        exit_price = pos['stoploss']
+                        exit_price = self._slip(pos['stoploss'], exit_action)
                         exit_reason = 'STOP_LOSS'
                     elif bar_high >= pos['target']:
-                        exit_price = pos['target']
+                        exit_price = self._slip(pos['target'], exit_action)
                         exit_reason = 'TARGET'
                 else:
                     if bar_high >= pos['stoploss']:
-                        exit_price = pos['stoploss']
+                        exit_price = self._slip(pos['stoploss'], exit_action)
                         exit_reason = 'STOP_LOSS'
                     elif bar_low <= pos['target']:
-                        exit_price = pos['target']
+                        exit_price = self._slip(pos['target'], exit_action)
                         exit_reason = 'TARGET'
 
                 if exit_price is not None:
@@ -3734,29 +3764,126 @@ class BacktestEngine:
             if len(positions) >= max_open_pos:
                 continue
 
+            # Mirrors live's _check_signal(), which — regardless of trading
+            # mode — refuses to evaluate a *new* entry in the first 15
+            # minutes of the session (9:15-9:30, so indicators/opening
+            # range have bars to form) or once the market has closed:
+            #   if MARKET_OPEN <= mins < MARKET_OPEN+15: return
+            #   if mins >= MARKET_CLOSE: return
+            # Previously this whole window check was nested inside
+            # `self.trading_mode == 'INTRADAY'`, so a Delivery/CNC backtest
+            # could open a position at 9:16 AM or 3:29 PM — something live
+            # would always refuse no matter the mode.
+            if bar_mins < PaperTradingEngine.MARKET_OPEN + 15 or bar_mins >= PaperTradingEngine.MARKET_CLOSE:
+                continue
+            # NO_NEW_TRADES_AFTER (14:30 cutoff) and the 9:15-14:00 trade
+            # slot exist only to guarantee runway to square off an INTRADAY
+            # (MIS) position by 15:15 — Delivery/CNC has no forced
+            # square-off, so it may enter any time up to MARKET_CLOSE
+            # (matches live's _open_position_nolock, which only applies
+            # NO_NEW_TRADES_AFTER / _in_trade_slot when trading_mode ==
+            # 'INTRADAY').
             if self.trading_mode == 'INTRADAY' and (
-                bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER or not _in_trade_slot(bar_mins)
+                bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER
+                or not _in_trade_slot(bar_mins)
             ):
                 continue
 
+            # Mirrors live's cooldown (self.last_exit_time / COOLDOWN_MINUTES)
+            # — backtest was previously able to re-enter a symbol on the very
+            # next bar after closing it, which live never allows.
+            if sym in last_exit_time:
+                cooldown_elapsed = (bar_dt - last_exit_time[sym]).total_seconds() / 60
+                if cooldown_elapsed < PaperTradingEngine.COOLDOWN_MINUTES:
+                    continue
+
             df_w = df_slice.iloc[-min_bars_needed:].reset_index(drop=True)
             ind_w = ind_slice.iloc[-min_bars_needed:].reset_index(drop=True)
-            b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict)
+            b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
+            vtot = b + s
+            buy_pct = (b / vtot * 100) if vtot > 0 else 50.0
+            sell_pct = (s / vtot * 100) if vtot > 0 else 50.0
 
             vlc = vote_log_count.get(sym, 0)
             if vlc < 60:
                 logger.debug(
                     f"  {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
-                    f"b={b:.1f}  s={s:.1f}  (threshold={vote_threshold})"
+                    f"b={b:.1f} ({buy_pct:.0f}%)  s={s:.1f} ({sell_pct:.0f}%)  (gate={min_vote_pct:.0f}%)"
                 )
                 vote_log_count[sym] = vlc + 1
 
+            # Same formula as live's buy_ok/sell_ok in _check_signal():
+            # percentage of triggered points >= MIN_VOTE_PCT, AND at least
+            # one point actually triggered in that direction (b/s >= 1.0).
+            buy_ok = buy_pct >= min_vote_pct and b >= 1.0
+            sell_ok = (
+                sell_pct >= min_vote_pct and s >= 1.0
+                and self.trading_mode != 'DELIVERY'
+            )
+            if buy_ok and sell_ok:
+                # Same tiebreak as live: whichever side scores higher wins
+                # when both directions independently qualify.
+                if sell_pct > buy_pct:
+                    buy_ok = False
+                else:
+                    sell_ok = False
+
             side = None
-            if b > s and b >= vote_threshold:
+            if buy_ok:
                 side = 'BUY'
-            elif s > b and s >= vote_threshold and self.trading_mode != 'DELIVERY':
+            elif sell_ok:
                 side = 'SELL'
             if side is None:
+                continue
+
+            # Determine which individual strategies actually triggered on
+            # this bar and pick a "best" one, mirroring live's
+            # direction_triggered/best_strategy logic in _check_signal().
+            # Needed so category-based checks below (breakout regime skip,
+            # VWAP/RSI/EMA50 extension vetoes inside _check_entry_quality)
+            # are evaluated against the strategy that actually fired,
+            # instead of being skipped entirely as backtest previously did.
+            all_triggered = []
+            for _name, _func in self.strategies_dict.items():
+                try:
+                    if _func(df_w, ind_w):
+                        all_triggered.append(_name)
+                except Exception:
+                    continue
+            direction_triggered = [
+                n for n in all_triggered
+                if AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH') in (side, 'BOTH')
+            ]
+            best_strategy = None
+            best_sc = -1
+            for _name in direction_triggered:
+                _sc = 70 + len(direction_triggered) * 5
+                if self._should_use_strategy(_name):
+                    _sc += 10
+                if _sc > best_sc:
+                    best_sc = _sc
+                    best_strategy = _name
+            if not best_strategy:
+                best_strategy = "VOTE_SIGNAL"
+
+            # Regime filter — mirrors live's skip_breakout: don't take a
+            # BREAKOUT-category strategy's signal (e.g. ORB) while NIFTY is
+            # RANGING (ADX <= 25). Previously backtest had no NIFTY context
+            # at all, so it would happily take breakout signals live's
+            # _check_signal() would refuse outright.
+            market_trend, market_regime = self._market_context_at(nifty_ctx, bar_dt)
+            if (
+                market_regime == "RANGING"
+                and AVAILABLE_STRATEGY_META.get(best_strategy, {}).get('category') == 'breakout'
+            ):
+                logger.debug(f"  {sym} {side} skipped — market RANGING, breakout strategy {best_strategy}")
+                continue
+
+            # Correlation filter — mirrors live's _corr_ok(): don't fight
+            # the index trend on a heavyweight constituent.
+            if market_trend == "BULLISH" and side == "SELL" and sym in HEAVYWEIGHTS:
+                continue
+            if market_trend == "BEARISH" and side == "BUY" and sym in HEAVYWEIGHTS:
                 continue
 
             gap_ok = True
@@ -3779,6 +3906,20 @@ class BacktestEngine:
 
             price = ltp
             atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
+
+            # Post-vote entry-quality veto — mirrors live's
+            # _open_position_nolock(), which runs every signal through
+            # _check_entry_quality() (volume surge, VWAP/ATR extension,
+            # RSI overbought/oversold, EMA50 distance, adverse candle
+            # pattern on the trigger bar) AFTER the vote passes. This
+            # method was already fully ported into BacktestEngine but was
+            # never actually called, so backtest was taking every
+            # vote-qualified signal live would go on to reject on quality.
+            quality_ok, _quality_reason = self._check_entry_quality(df_w, ind_w, side, sym, bar_dt, best_strategy)
+            if not quality_ok:
+                logger.debug(f"  {sym} {side} rejected by entry quality: {_quality_reason}")
+                continue
+
             if atr and atr > 0:
                 target, stoploss = self._calculate_atr_targets(price, atr, side)
             elif side == 'BUY':
@@ -3789,31 +3930,65 @@ class BacktestEngine:
                 stoploss = price * (1 + self.stoploss_pct)
 
             margin_per_share = price * margin_pct
-            qty = int((wallet * 0.7) / margin_per_share) if margin_per_share > 0 else 0
+            qty = int((wallet * 0.8) / margin_per_share) if margin_per_share > 0 else 0
+
+            # ATR-based risk sizing — mirrors live's
+            # _smart_allocation_time_based(): cap qty by risk-per-trade
+            # (wallet * RISK_PER_TRADE_PCT / (ATR * ATR_SL_MULTIPLIER)) in
+            # addition to the plain margin-affordability cap. Previously
+            # backtest only ever sized by margin affordability, which could
+            # size a position far larger than live ever would on a
+            # high-ATR (volatile) stock.
+            if atr and atr > 0 and qty > 0:
+                risk_amount = wallet * PaperTradingEngine.RISK_PER_TRADE_PCT
+                sl_distance = atr * PaperTradingEngine.ATR_SL_MULTIPLIER
+                if sl_distance > 0:
+                    risk_qty = int(risk_amount / sl_distance)
+                    qty = max(1, min(qty, risk_qty))
+
+            # Mirrors live's _smart_allocation_time_based() slot-based sizing
+            # cut — backtest was previously always sizing at full 80% wallet
+            # regardless of time of day.
+            
             if qty <= 0:
                 logger.debug(f"  {sym} {side} signal but qty=0 (wallet={wallet:.2f}, margin_per_share={margin_per_share:.2f})")
                 continue
 
+            # Slippage-adjusted fill — mirrors live's
+            # _get_l2_execution_price()/SLIPPAGE_PCT: a BUY pays slightly
+            # above the reference price, a SELL receives slightly below it.
+            # target/stoploss/sizing above stay on the raw reference price
+            # (same basis live uses), only the recorded entry_price/wallet
+            # debit use the slipped fill — matching live's
+            # _open_position_nolock exactly.
+            fill_price = self._slip(price, side)
+            if side == 'BUY':
+                fill_price = min(fill_price, round(bar_high, 2))
+            else:
+                fill_price = max(fill_price, round(bar_low, 2))
+
             positions[sym] = {
                 'side': side,
-                'entry_price': price,
+                'entry_price': fill_price,
                 'qty': qty,
                 'target': target,
                 'stoploss': stoploss,
                 'entry_time': bar_time,
                 'entry_date': bar_dt.date(),
+                'strategy': best_strategy,
             }
-            wallet -= price * qty * margin_pct
+            wallet -= fill_price * qty * margin_pct
             logger.info(
-                f"BACKTEST {side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  price={price:.2f}  qty={qty}  "
-                f"b={b:.1f}  s={s:.1f}  target={target:.2f}  sl={stoploss:.2f}  open={len(positions)}/{max_open_pos}"
+                f"BACKTEST {side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  price={price:.2f} fill={fill_price:.2f}  qty={qty}  "
+                f"strategy={best_strategy}  b={b:.1f}  s={s:.1f}  target={target:.2f}  sl={stoploss:.2f}  open={len(positions)}/{max_open_pos}"
             )
 
         for sym, pos in list(positions.items()):
             df = symbol_data[sym]['df']
             last_price = float(df['close'].iloc[-1])
             last_time = df['date'].iloc[-1] if 'date' in df.columns else datetime.now()
-            _release(sym, pos, last_price, 'DATA_END', last_time)
+            exit_action = 'SELL' if pos['side'] == 'BUY' else 'BUY'
+            _release(sym, pos, self._slip(last_price, exit_action), 'DATA_END', last_time)
             logger.debug(f"  {sym} closed at end of data: P&L={trades[-1]['pnl']:.2f}")
             del positions[sym]
 
@@ -3851,12 +4026,20 @@ class BacktestEngine:
         }
 
     def _close_trade(self, sym, pos, exit_price, reason, exit_time=None):
-        if pos['side'] == 'BUY':
-            pnl = (exit_price - pos['entry_price']) * pos['qty']
+        entry = pos['entry_price']
+        qty = pos['qty']
+        side = pos['side']
+        # Exact same charge model as PaperTradingEngine._close_position_nolock —
+        # real brokerage/STT/exchange/GST/stamp-duty based on turnover. The old
+        # `abs(pnl) * 0.001` here scaled charges off *profit*, not turnover, so
+        # it was off by ~2-3 orders of magnitude vs real Zerodha charges and made
+        # backtest P&L meaningless as a preview of live results.
+        if side == 'BUY':
+            chg = calc_zerodha_charges(entry, exit_price, qty)
         else:
-            pnl = (pos['entry_price'] - exit_price) * pos['qty']
-        charges = abs(pnl) * 0.001
-        net_pnl = pnl - charges
+            chg = calc_zerodha_charges(exit_price, entry, qty)
+        gross_pnl = chg['gross_pnl']
+        net_pnl = chg['net_pnl']
         entry_time = pos.get('entry_time')
 
         def _fmt(t):
@@ -3872,31 +4055,273 @@ class BacktestEngine:
         entry_iso = _fmt(entry_time)
         return {
             'symbol': sym,
-            'side': pos['side'],
-            'entry_price': pos['entry_price'],
+            'side': side,
+            'entry_price': entry,
             'exit_price': exit_price,
-            'qty': pos['qty'],
+            'qty': qty,
+            'gross_pnl': round(gross_pnl, 2),
             'pnl': round(net_pnl, 2),
+            'total_charges': round(chg['total_charges'], 2),
+            'brokerage': round(chg['brokerage'], 2),
+            'stt': round(chg['stt'], 2),
+            'exchange_charge': round(chg['exchange_charge'], 2),
+            'gst': round(chg['gst'], 2),
+            'stamp_duty': round(chg['stamp_duty'], 2),
             'exit_reason': reason,
+            'strategy': pos.get('strategy', 'VOTE_SIGNAL'),
             'entry_time': entry_iso,
             'exit_time': _fmt(exit_time),
             'date': entry_iso[:10] if entry_iso else '',
+            'target': round(pos.get('target', 0), 2) if pos.get('target') is not None else None,
+            'stoploss': round(pos.get('stoploss', 0), 2) if pos.get('stoploss') is not None else None,
         }
 
-    def _calculate_atr_targets(self, price, atr, side):
-        # ATR multiples scale with the configured target/SL profile (base:
-        # 1.5x/1.0x ATR at the 1.0%/0.5% intraday defaults) so a wider CNC
-        # target also widens the ATR-driven target/SL, instead of a fixed
-        # multiplier that ignores what the user configured.
-        target_mult = 1.5 * (self.target_pct / 0.010)
-        sl_mult = 1.0 * (self.stoploss_pct / 0.005)
-        if side == 'BUY':
-            target = price + atr * target_mult
-            stoploss = price - atr * sl_mult
+    def _fetch_nifty_context(self, kite, start, end):
+        """One-time fetch of NIFTY 50 5-min history spanning the backtest
+        date range, used to reproduce live's market_trend/market_regime
+        checks (see get_nifty_data() + _check_signal() in
+        PaperTradingEngine) without hitting the historical-data API on
+        every single bar-event. Returns a DataFrame sorted by time with
+        columns ['dt','change_pct','adx'], or None if the fetch fails —
+        in which case regime/correlation gating is skipped for this run,
+        matching live's own fallback when get_nifty_data() returns None.
+        """
+        try:
+            # Pad the start a bit so the first bars of the range still have
+            # enough history behind them for ADX(14) to be non-NaN.
+            fetch_start = start - timedelta(days=5)
+            _hist_limiter.wait("backtest nifty context")
+            data = kite.historical_data(256265, fetch_start, end, "3minute")
+            if not data or len(data) < 20:
+                return None
+            df = pd.DataFrame(data)
+            ind = Indicators.calculate_all(df)
+            dt = pd.to_datetime(df['date']) if 'date' in df.columns else pd.to_datetime(df.index)
+            change_pct = df['close'].pct_change() * 100
+            adx = ind['adx'] if 'adx' in ind.columns else pd.Series(0.0, index=df.index)
+            ctx = pd.DataFrame({
+                'dt': dt.reset_index(drop=True),
+                'change_pct': change_pct.reset_index(drop=True),
+                'adx': adx.reset_index(drop=True),
+            })
+            ctx = ctx.sort_values('dt').reset_index(drop=True)
+            return ctx
+        except Exception as e:
+            logger.warning(f"Backtest NIFTY context fetch failed: {e}")
+            return None
+
+    def _market_context_at(self, ctx, bar_dt):
+        """Look up the NIFTY market_trend/market_regime as of the most
+        recent NIFTY bar at or before bar_dt. Mirrors the thresholds in
+        PaperTradingEngine._check_signal() (change > 0.3% => BULLISH,
+        < -0.3% => BEARISH; ADX > 25 => TRENDING else RANGING)."""
+        if ctx is None or ctx.empty:
+            return None, None
+        try:
+            pos = ctx['dt'].searchsorted(bar_dt, side='right') - 1
+            if pos < 0:
+                return None, None
+            row = ctx.iloc[int(pos)]
+            change_pct = row['change_pct']
+            adx = row['adx']
+            if pd.isna(change_pct):
+                change_pct = 0.0
+            if pd.isna(adx):
+                adx = 0.0
+            market_trend = "BULLISH" if change_pct > 0.3 else "BEARISH" if change_pct < -0.3 else "NEUTRAL"
+            market_regime = "TRENDING" if adx > 25 else "RANGING"
+            return market_trend, market_regime
+        except Exception:
+            return None, None
+
+    def _should_use_strategy(self, name):
+        # Mirrors PaperTradingEngine._should_use_strategy, using this
+        # backtest run's strategy_performance snapshot instead of the live
+        # engine's continuously-updating one.
+        sp = (self.strategy_performance or {}).get(name)
+        if not sp:
+            return True
+        total = sp.get('total_trades', 0)
+        if total < PaperTradingEngine.STRATEGY_MIN_TRADES:
+            return True
+        return sp.get('win_rate', 0) >= PaperTradingEngine.STRATEGY_MIN_WIN_RATE
+
+    @staticmethod
+    def _slip(price, action):
+        # Mirrors PaperTradingEngine._get_execution_price's slippage
+        # direction: a BUY pays slightly above the reference price, a SELL
+        # receives slightly below it. Applied at both entry and exit so
+        # backtest fills aren't systematically better than live's ever
+        # would be.
+        if action == 'BUY':
+            return round(price * (1.0 + PaperTradingEngine.SLIPPAGE_PCT), 2)
         else:
-            target = price - atr * target_mult
-            stoploss = price + atr * sl_mult
-        return round(target, 2), round(stoploss, 2)
+            return round(price * (1.0 - PaperTradingEngine.SLIPPAGE_PCT), 2)
+
+    def _calculate_atr_targets(self, price, atr, side):
+        # Exact port of PaperTradingEngine._calculate_atr_targets — same
+        # 3-tier atr_pct branching (high-vol / low-vol / normal) and the
+        # same hard min/max caps via self.max_target_pct/self.max_sl_pct.
+        # The previous version here used an unrelated linear-scaling
+        # formula that didn't reproduce live's target/SL levels at all.
+        atr_pct = (atr / price) * 100 if price > 0 else 1.0
+        if atr_pct > 2.0:
+            if side == 'BUY':
+                sl = round(price - atr * 1.0, 2)
+                tgt = round(price + atr * 1.5, 2)
+            else:
+                sl = round(price + atr * 1.0, 2)
+                tgt = round(price - atr * 1.5, 2)
+        elif atr_pct < 0.5:
+            tight_tgt_pct = self.target_pct * 0.5
+            tight_sl_pct = self.stoploss_pct * 0.6
+            if side == 'BUY':
+                tgt = round(price * (1.0 + tight_tgt_pct), 2)
+                sl = round(price * (1.0 - tight_sl_pct), 2)
+            else:
+                tgt = round(price * (1.0 - tight_tgt_pct), 2)
+                sl = round(price * (1.0 + tight_sl_pct), 2)
+        else:
+            if side == 'BUY':
+                tgt = round(price * (1.0 + self.target_pct), 2)
+                sl = round(price * (1.0 - self.stoploss_pct), 2)
+            else:
+                tgt = round(price * (1.0 - self.target_pct), 2)
+                sl = round(price * (1.0 + self.stoploss_pct), 2)
+        if side == 'BUY':
+            tgt = min(tgt, round(price * (1.0 + self.max_target_pct), 2))
+            sl = max(sl, round(price * (1.0 - self.max_sl_pct), 2))
+        else:
+            tgt = max(tgt, round(price * (1.0 - self.max_target_pct), 2))
+            sl = min(sl, round(price * (1.0 + self.max_sl_pct), 2))
+        if side == 'BUY':
+            if sl >= price or tgt <= price or tgt <= sl:
+                tgt = round(price * (1.0 + self.target_pct), 2)
+                sl = round(price * (1.0 - self.stoploss_pct), 2)
+        else:
+            if tgt >= price or sl <= price or tgt >= sl:
+                tgt = round(price * (1.0 - self.target_pct), 2)
+                sl = round(price * (1.0 + self.stoploss_pct), 2)
+        return tgt, sl
+
+    def _check_entry_quality(self, df, ind, side, symbol, bar_dt, strategy_name=None):
+        """Exact port of PaperTradingEngine._check_entry_quality, adapted to
+        take the bar's timestamp (bar_dt) instead of datetime.now(). Live
+        vetoes an entry here (extension from VWAP, RSI overbought/oversold,
+        distance from EMA50, adverse candle pattern on the trigger bar)
+        AFTER the vote passes — backtest previously had no equivalent gate
+        at all, so it was taking every vote-qualified signal live would
+        actually reject. See the live method for full per-check rationale;
+        logic kept field-for-field identical here."""
+        try:
+            price = float(df['close'].iloc[-1])
+            now_mins = bar_dt.hour * 60 + bar_dt.minute
+
+            category = AVAILABLE_STRATEGY_META.get(strategy_name, {}).get('category', 'default')
+            skip_extension_checks = category in ('breakout', 'momentum')
+
+            def _iv(key, fallback=0.0):
+                try:
+                    v = float(ind[key].iloc[-1])
+                    return fallback if (isinstance(v, float) and np.isnan(v)) else v
+                except Exception:
+                    return fallback
+            ema50 = _iv('ema_50', price)
+            rsi = _iv('rsi', 50.0)
+            vwap = _iv('vwap', 0.0)
+            vwap_u1 = _iv('vwap_upper1', price * 1.02)
+            vwap_l1 = _iv('vwap_lower1', price * 0.98)
+            roc5 = _iv('roc5', 0.0)
+            htf_bull = _iv('htf_bull', 0.5)
+            atr = _iv('atr', 0.0)
+            avg_vol = float(df['volume'].iloc[-10:].mean()) if len(df) >= 10 else float(df['volume'].mean())
+            cur_vol = float(df['volume'].iloc[-1])
+            vol_mult = 1.0 if now_mins < 10*60 else 0.5 if now_mins < 13*60 else 0.4
+            if cur_vol < avg_vol * vol_mult:
+                return False, f"Low volume {int(cur_vol):,} < {int(avg_vol*vol_mult):,} ({vol_mult}x avg)"
+            if cur_vol < avg_vol * PaperTradingEngine.MIN_VOL_SURGE:
+                return False, f"Volume surge insufficient: {cur_vol/avg_vol:.1f}x < {PaperTradingEngine.MIN_VOL_SURGE}x"
+
+            cp = {}
+            try:
+                n = len(df) - 1
+                c = float(df['close'].iloc[n]); o = float(df['open'].iloc[n])
+                h = float(df['high'].iloc[n]); l = float(df['low'].iloc[n])
+                rng = max(h - l, 1e-9); body = abs(c - o); body_r = body / rng
+                uw_r = (h - max(c, o)) / rng; lw_r = (min(c, o) - l) / rng
+                bull = c >= o; bear = c < o
+                cp['DOJI'] = body_r < 0.10
+                cp['SPINNING_TOP'] = (0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25)
+                cp['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
+                cp['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
+                cp['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
+                cp['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
+                cp['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
+                cp['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
+                if n >= 1:
+                    pc = float(df['close'].iloc[n-1]); po = float(df['open'].iloc[n-1])
+                    ph = float(df['high'].iloc[n-1]); pl = float(df['low'].iloc[n-1])
+                    pbull = pc > po; pbear = pc < po
+                    pb = abs(pc - po); pm = (po + pc) / 2.0
+                    cp['BULL_ENGULFING'] = (pbear and bull and o <= pc and c >= po and body >= pb)
+                    cp['BEAR_ENGULFING'] = (pbull and bear and o >= pc and c <= po and body >= pb)
+                    cp['PIERCING_LINE'] = (pbear and bull and o < pl and c > pm and c < po)
+                    cp['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < pm and c > pc)
+                    cp['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
+                    cp['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
+                if n >= 2:
+                    c2 = float(df['close'].iloc[n-2]); o2 = float(df['open'].iloc[n-2])
+                    c1 = float(df['close'].iloc[n-1]); o1 = float(df['open'].iloc[n-1])
+                    h1 = float(df['high'].iloc[n-1]); l1 = float(df['low'].iloc[n-1])
+                    rng1 = max(h1 - l1, 1e-9); body1 = abs(c1 - o1) / rng1
+                    mid2 = (o2 + c2) / 2.0
+                    cp['MORNING_STAR'] = (c2 < o2 and body1 < 0.30 and bull and c > mid2)
+                    cp['EVENING_STAR'] = (c2 > o2 and body1 < 0.30 and bear and c < mid2)
+                    cp['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50)
+                    cp['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50)
+            except Exception:
+                pass
+
+            if side == 'BUY':
+                bearish_veto = ['SHOOTING_STAR','EVENING_STAR','BEAR_ENGULFING','DARK_CLOUD_COVER','HANGING_MAN','THREE_BLACK_CROWS','BEAR_MARUBOZU','TWEEZER_TOP']
+                triggered = [p for p in bearish_veto if cp.get(p)]
+                if triggered:
+                    return False, f"Bearish candle pattern on trigger bar: {', '.join(triggered)}"
+            if side == 'SELL':
+                bullish_veto = ['HAMMER','MORNING_STAR','BULL_ENGULFING','PIERCING_LINE','INVERTED_HAMMER','THREE_WHITE_SOLDIERS','BULL_MARUBOZU','TWEEZER_BOTTOM']
+                triggered = [p for p in bullish_veto if cp.get(p)]
+                if triggered:
+                    return False, f"Bullish candle pattern on trigger bar: {', '.join(triggered)}"
+
+            if not skip_extension_checks:
+                if side == 'BUY':
+                    if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
+                        return False, f"Price extended above VWAP+1sigma ({price:.2f} > {vwap_u1:.2f}) ROC5={roc5:.1f}%"
+                    if atr > 0 and vwap > 0 and (price - vwap) > 2.0 * atr:
+                        return False, f"Price > 2xATR above VWAP ({price:.2f} vs {vwap:.2f})"
+                if side == 'SELL':
+                    if vwap_l1 > 0 and price < vwap_l1 and roc5 < -1.5:
+                        return False, f"Price extended below VWAP-1sigma ({price:.2f} < {vwap_l1:.2f}) ROC5={roc5:.1f}%"
+                    if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
+                        return False, f"Price > 2xATR below VWAP ({price:.2f} vs {vwap:.2f})"
+                if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
+                    return False, f"Overbought — RSI {rsi:.1f} > 72, HTF bull {htf_bull:.2f} > 0.85"
+                if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
+                    return False, f"Oversold — RSI {rsi:.1f} < 28, HTF bull {htf_bull:.2f} < 0.15"
+                if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
+                    return False, f"BUY price {price:.2f} >2% below EMA50 {ema50:.2f} — counter-trend"
+                if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
+                    return False, f"SELL price {price:.2f} >2% above EMA50 {ema50:.2f} — counter-trend"
+                if side == 'BUY' and rsi > 75:
+                    return False, f"BUY into overbought RSI {rsi:.1f} > 75"
+                if side == 'SELL' and rsi < 25:
+                    return False, f"SELL into oversold RSI {rsi:.1f} < 25"
+                if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
+                    return False, f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing down"
+
+            return True, None
+        except Exception:
+            return True, None
 
 # ==================== FLASK APP ====================
 app = Flask(__name__)
@@ -4201,7 +4626,8 @@ def run_backtest():
     # default proxy_read_timeout and surface as a 504 even on success.
     backtest = BacktestEngine(strategies_dict, trading_mode=mode,
                                target_pct=target_pct_ui / 100.0, stoploss_pct=stoploss_pct_ui / 100.0,
-                               min_hold_days=min_hold_days)
+                               min_hold_days=min_hold_days,
+                               strategy_performance=dict(pe.strategy_performance or {}))
     UserManager._backtest_engines[user_id] = backtest
     result = backtest.run_async(kite, symbol_map, pinned, initial_wallet=wallet, from_date=from_date, to_date=to_date)
     return jsonify(result)
@@ -4476,8 +4902,8 @@ def trade_slots_status():
         'in_slot': _in_trade_slot(mins),
         'slot_label': _slot_label(mins),
         'slots': [
-            {'name': 'SLOT-1', 'label': '9:15–14:00', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Trading Window',
-             'active': 9*60+15 <= mins <= 14*60+0},
+            {'name': 'SLOT-1', 'label': '9:15–14:30', 'quality': '⭐⭐⭐⭐⭐', 'type': 'Trading Window',
+            'active': 9*60+15 <= mins <= 14*60+30},
         ],
     })
 
@@ -4613,7 +5039,7 @@ def market_movers():
         for sym_info in candidates:
             try:
                 _hist_limiter.wait(f"movers hist {sym_info['symbol']}")
-                data = kite.historical_data(sym_info["token"], start5, now, "5minute")
+                data = kite.historical_data(sym_info["token"], start5, now, "3minute")
                 if not data or len(data) < 10:
                     continue
 
@@ -4754,21 +5180,21 @@ def gen_paper_tab(pe):
         '</div></div>'
     )
     mode_label = 'CNC/Delivery' if pe.trading_mode == 'DELIVERY' else 'Intraday'
-    # SqOff time and the 9:15-14:00 trade-slot window are INTRADAY-only
+    # SqOff time and the 9:15-14:30 trade-slot window are INTRADAY-only
     # concepts (they exist to guarantee time to exit before the 15:15
     # square-off). CNC/Delivery has no forced exit, so the banner must not
     # claim either applies to it.
     if pe.trading_mode == 'DELIVERY':
         mode_window_txt = 'No forced square-off · Entries allowed 9:30–15:30'
     else:
-        mode_window_txt = 'SqOff 15:15 · Trading Window: 9:15–14:00 ⭐⭐⭐⭐⭐'
+        mode_window_txt = 'SqOff 15:15 · Trading Window: 9:15–14:30 ⭐⭐⭐⭐⭐'
     banner = (
         '<div class="pt-banner">'
         '<div style="font-size:20px;color:var(--gold);flex-shrink:0;padding-top:2px"><i class="fas fa-robot"></i></div>'
         '<div style="flex:1;min-width:0">'
         '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.8 — Strategy-Agnostic Scoring</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5">'
-        '70% wallet · ATR risk sizing (1%/trade) · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · ' + mode_window_txt + ' · '
+        '80% wallet · ATR risk sizing (1%/trade) · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · ' + mode_window_txt + ' · '
         'Score≥35 · Vote≥50% · Vol≥1.3×'
         '</div></div>'
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;width:100%">'
@@ -5087,10 +5513,10 @@ el.innerHTML='<div style="display:flex;flex-direction:column;gap:2px;flex:1;min-
 
 function _slotBadge(tot,isWday){
 if(!isWday)return '';
-var S1s=9*60+15,S1e=14*60+0;
+var S1s=9*60+15,S1e=14*60+30;
 var inS1=(tot>=S1s&&tot<=S1e);
 var c,lbl;
-if(inS1){c='#00e676';lbl='🟢 TRADING WINDOW ACTIVE — 9:15–14:00 ⭐⭐⭐⭐⭐';}
+if(inS1){c='#00e676';lbl='🟢 TRADING WINDOW ACTIVE — 9:15–14:30 ⭐⭐⭐⭐⭐';}
 else{c='#8b949e';lbl='⏸ Outside Trading Window';}
 return '<div style="margin-top:6px;font-size:10px;font-family:Space Mono,monospace;color:'+c+';background:rgba(0,0,0,.25);border:1px solid '+c+'44;border-radius:5px;padding:3px 8px;display:inline-block">'+lbl+'</div>';
 }
@@ -5499,7 +5925,7 @@ function _displayBacktestResults(res){
         return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
     }
     if(res.trades && res.trades.length){
-        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
+        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>Target</th><th>SL</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
         res.trades.forEach(t=>{
             var entryDt = new Date(t.entry_time);
             var exitDt = new Date(t.exit_time);
@@ -5510,7 +5936,9 @@ function _displayBacktestResults(res){
                 var hrs = Math.floor((ms%86400000)/3600000);
                 heldTxt = days>0 ? days+'d '+hrs+'h' : hrs+'h';
             }
-            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+            var tgtTxt = (t.target!=null) ? '₹'+Number(t.target).toFixed(2) : '—';
+            var slTxt = (t.stoploss!=null) ? '₹'+Number(t.stoploss).toFixed(2) : '—';
+            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="num" style="color:var(--green-b)">${tgtTxt}</td><td class="num" style="color:var(--red-b)">${slTxt}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
         });
         html+='</tbody></table>';
         tradesDiv.innerHTML=html;
