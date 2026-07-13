@@ -888,6 +888,74 @@ def _get_strategy_min_bars(strategies_dict, fallback=160):
             best = val if best is None else max(best, val)
     return best if best is not None else fallback
 
+def _get_strategy_timeframe(strategies_dict, fallback='3minute'):
+    """
+    Reads the candle timeframe each strategy module wants directly off
+    that module (a `TIMEFRAME = "3minute"` / "5minute" / "15minute" etc.
+    constant, same pattern as MIN_BARS_REQUIRED above) instead of the
+    engine hardcoding "3minute" for every strategy regardless of what it
+    actually needs. This is what lets each strategy file own its own
+    data settings — the engine still owns the single Kite Connect session
+    (so calls stay rate-limited/cached and every strategy's data comes
+    from one consistent fetch, rather than each strategy file making its
+    own uncoordinated broker API calls), but the PARAMETERS of that fetch
+    (timeframe, lookback via MIN_BARS_REQUIRED) are entirely strategy-
+    declared.
+
+    If multiple loaded strategies declare different timeframes, this
+    currently returns the first one found and logs a warning — running
+    strategies that need genuinely different timeframes in the same
+    scan/backtest at once requires per-timeframe data (a larger change);
+    for now, keep all concurrently-active strategies on one timeframe, or
+    run them in separate scans/backtests.
+    """
+    seen_modules = set()
+    found = {}
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'TIMEFRAME', None)
+        if val is not None:
+            found[module_name] = val
+    if not found:
+        return fallback
+    distinct = set(found.values())
+    if len(distinct) > 1:
+        logger.warning(
+            f"Strategies declare different TIMEFRAMEs {found} — using "
+            f"'{next(iter(distinct))}' for this scan. Run strategies that "
+            f"need different timeframes separately."
+        )
+    return next(iter(distinct))
+
+def _lookback_days(timeframe, min_bars_needed, floor_days=6):
+    """
+    How many calendar days of history to request for a given candle
+    timeframe so that at least min_bars_needed completed bars are
+    available, with a small buffer for holidays/weekends. Used so that
+    switching a strategy's TIMEFRAME (see _get_strategy_timeframe) also
+    correctly scales the historical_data() lookback window, instead of
+    the engine hardcoding "6 days" for every timeframe (which is right
+    for 3minute but far too short for, say, a daily-timeframe strategy).
+    """
+    minutes_per_bar = {
+        'minute': 1, '3minute': 3, '5minute': 5, '10minute': 10,
+        '15minute': 15, '30minute': 30, '60minute': 60,
+    }.get(timeframe, 3)
+    if timeframe == 'day':
+        # ~1.6 calendar days per trading day (weekends/holidays buffer)
+        return max(floor_days, int(min_bars_needed * 1.6) + 5)
+    trading_minutes_per_day = 375  # NSE 9:15-15:30
+    bars_per_day = max(1, trading_minutes_per_day // minutes_per_bar)
+    import math
+    days_needed = math.ceil(min_bars_needed / bars_per_day) + 2  # +2 buffer days
+    return max(floor_days, days_needed)
+
 # ==================== CANDLE PATTERN ENGINE ====================
 def detect_candle_patterns(df, i):
     patterns = {}
@@ -2256,27 +2324,16 @@ class PaperTradingEngine:
         if price < self.MIN_PRICE:
             _block(f"Price {price:.2f} below min {self.MIN_PRICE}")
             return None
-        try:
-            if df is not None and len(df) > 20 and 'date' in df.columns:
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                today_mask = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d') == today_str
-                yesterday_prices = df[~today_mask]['close']
-                if len(yesterday_prices) > 0:
-                    prev_close = float(yesterday_prices.iloc[-1])
-                    gap_pct = (price - prev_close) / prev_close * 100
-                    if side == 'BUY' and gap_pct > 1.5:
-                        _block(f"Gap-up filter: +{gap_pct:.1f}% from prev close (limit +1.5%)")
-                        return None
-                    if side == 'SELL' and gap_pct < -1.5:
-                        _block(f"Gap-down filter: {gap_pct:.1f}% from prev close (limit -1.5%)")
-                        return None
-        except Exception:
-            pass
-        if df is not None and ind is not None:
-            ok, quality_reason = self._check_entry_quality(df, ind, side, symbol, strategy_name)
-            if not ok:
-                _block(f"Quality check failed: {quality_reason}")
-                return None
+        # NOTE: the gap-up/gap-down filter and the _check_entry_quality()
+        # call (volume-surge, candle-pattern, VWAP/RSI/EMA50 extension
+        # vetoes) that used to sit here have been removed entirely, per
+        # requirement: a strategy signal should place a trade directly,
+        # with no additional gates/panels layered on top by the engine.
+        # The strategy file itself is now the ONLY thing deciding whether
+        # an entry is valid. What remains above/below this point is not a
+        # signal filter — it's order mechanics (circuit breaker, capital
+        # sizing, trading-mode/session-window rules) needed to actually
+        # place a real order, and stays regardless of which strategy fired.
         qty, margin_used, margin_pct, margin_source = self._smart_allocation_time_based(price, now, symbol=symbol, side=side, atr=atr)
         if qty == 0:
             wallet = self.data['wallet']
@@ -2598,13 +2655,15 @@ class PaperTradingEngine:
             _current_slot_lbl = _slot_label(mins)
 
             min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
+            strat_timeframe = _get_strategy_timeframe(self.strategies_dict)
+            strat_lookback_days = _lookback_days(strat_timeframe, min_bars_needed)
 
-            _hist_limiter.wait(f"3min {symbol}")
+            _hist_limiter.wait(f"{strat_timeframe} {symbol}")
             data5 = kite.historical_data(
                 SYMBOL_MAP[symbol]["token"],
-                now - timedelta(days=6),
+                now - timedelta(days=strat_lookback_days),
                 now,
-                "3minute",
+                strat_timeframe,
             )
             if not data5 or len(data5) < min_bars_needed:
                 self._log_diag(
@@ -2652,25 +2711,12 @@ class PaperTradingEngine:
             avg_vol = float(df["volume"].iloc[-20:].mean())
             cur_vol = int(df["volume"].iloc[-1])
             now_mins = now.hour * 60 + now.minute
-            vol_mult = 1.0 if now_mins < 10 * 60 else 0.5 if now_mins < 13 * 60 else 0.4
-
-            if cur_vol < avg_vol * vol_mult:
-                self._add_signal_log(
-                    {
-                        "time": now.strftime("%H:%M:%S"),
-                        "date": now.strftime("%Y-%m-%d"),
-                        "symbol": symbol,
-                        "ltp": round(ltp_initial, 2),
-                        "volume": cur_vol,
-                        "avg_volume": int(avg_vol),
-                        "status": "REJECTED",
-                        "reason": (
-                            f"Low volume {cur_vol:,} < "
-                            f"{int(avg_vol*vol_mult):,} ({vol_mult}× avg)"
-                        ),
-                    }
-                )
-                return
+            # NOTE: the pre-strategy low-volume rejection that used to sit
+            # here (returning before any strategy function was even
+            # called) has been removed — it silently killed every signal
+            # regardless of what the strategy itself actually requires.
+            # Volume/quality filtering, if a strategy wants it, belongs
+            # inside that strategy's own file, not as a blanket engine gate.
 
             pin_meta = self.data.get("pinned_meta", {}).get(symbol, {})
             pin_dir = pin_meta.get("direction", "BOTH")
@@ -2727,14 +2773,16 @@ class PaperTradingEngine:
             effective_buy_min = self.MIN_VOTE_PCT
             effective_sell_min = self.MIN_VOTE_PCT
 
-            buy_ok = (
-                allow_buy
-                and s5_buy_pct >= self.MIN_VOTE_PCT
-                and strat5_b >= 1.0
-            )
+            # NOTE: previously this required a strategy's votes to clear a
+            # percentage-of-total-votes threshold (MIN_VOTE_PCT) — a
+            # "panel" gate on top of the strategy's own signal. Removed:
+            # a strategy triggering (strat5_b/s >= 1.0) IS the signal,
+            # full stop. allow_buy/allow_sell (pin direction) is the only
+            # remaining condition, since that's a user-set trading
+            # restriction on the symbol, not an engine-side quality gate.
+            buy_ok = allow_buy and strat5_b >= 1.0
             sell_ok = (
                 allow_sell
-                and s5_sel_pct >= self.MIN_VOTE_PCT
                 and strat5_s >= 1.0
                 and self.trading_mode != 'DELIVERY'
             )
@@ -2789,11 +2837,11 @@ class PaperTradingEngine:
                 market_trend = "NEUTRAL"
                 market_regime = "UNKNOWN"
 
-            skip_breakout = (
-                market_regime == "RANGING"
-                and best_strategy
-                and AVAILABLE_STRATEGY_META.get(best_strategy, {}).get('category') == 'breakout'
-            )
+            # NOTE: market_trend/market_regime are still computed and logged
+            # for visibility, but no longer used to block a signal — the
+            # "skip breakout strategies while market is RANGING" gate has
+            # been removed. A strategy that triggers places a trade.
+            skip_breakout = False
 
             log_entry = {
                 "time": now.strftime("%H:%M:%S"),
@@ -2933,32 +2981,12 @@ class PaperTradingEngine:
                     self._add_signal_log(log_entry)
                     return
 
-                def _corr_ok(trade_side):
-                    if not nifty_data:
-                        return True
-                    if market_trend == "BULLISH" and trade_side == "SELL" and symbol in HEAVYWEIGHTS:
-                        return False
-                    if market_trend == "BEARISH" and trade_side == "BUY" and symbol in HEAVYWEIGHTS:
-                        return False
-                    return True
+                # NOTE: the correlation gate (blocking a BUY/SELL on a
+                # HEAVYWEIGHTS symbol that "fights" the NIFTY trend) has
+                # been removed — a strategy signal is no longer second-
+                # guessed against index trend.
 
-                if buy_ok and not _corr_ok("BUY"):
-                    log_entry["status"] = "REJECTED"
-                    log_entry["reason"] = (
-                        f"Correlation block: market {market_trend}, "
-                        f"cannot BUY heavyweight {symbol}"
-                    )
-                    self._add_signal_log(log_entry)
-                    return
 
-                if sell_ok and not _corr_ok("SELL"):
-                    log_entry["status"] = "REJECTED"
-                    log_entry["reason"] = (
-                        f"Correlation block: market {market_trend}, "
-                        f"cannot SELL heavyweight {symbol}"
-                    )
-                    self._add_signal_log(log_entry)
-                    return
 
                 if buy_ok:
                     _quote_limiter.wait(f"order_ltp BUY {symbol}")
@@ -3028,8 +3056,8 @@ class PaperTradingEngine:
 
                 else:
                     reasons = []
-                    raw_buy_ok = (s5_buy_pct >= self.MIN_VOTE_PCT and strat5_b >= 1.0)
-                    raw_sell_ok = (s5_sel_pct >= self.MIN_VOTE_PCT and strat5_s >= 1.0)
+                    raw_buy_ok = strat5_b >= 1.0
+                    raw_sell_ok = strat5_s >= 1.0
                     if raw_buy_ok and not allow_buy:
                         reasons.append(f"BUY signal blocked — stock pinned as {pin_dir} only")
                     if raw_sell_ok and not allow_sell:
@@ -3042,13 +3070,9 @@ class PaperTradingEngine:
                         else ("BUY" if leaning_buy else "SELL")
                     )
                     if check_dir == "BUY":
-                        if s5_buy_pct < self.MIN_VOTE_PCT:
-                            reasons.append(f"5m buy vote {s5_buy_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
                         if strat5_b < 1.0:
                             reasons.append(f"No {self.strategy_name} BUY strategy triggered")
                     else:
-                        if s5_sel_pct < self.MIN_VOTE_PCT:
-                            reasons.append(f"5m sell vote {s5_sel_pct:.0f}% < {self.MIN_VOTE_PCT:.0f}%")
                         if strat5_s < 1.0:
                             reasons.append(f"No {self.strategy_name} SELL strategy triggered")
 
@@ -3627,19 +3651,16 @@ class BacktestEngine:
             return t
 
         total_syms = len(pinned_stocks)
-        # Mirrors live's _check_signal() buy_ok/sell_ok gate exactly: a
-        # direction only qualifies if its share of triggered-strategy points
-        # is >= MIN_VOTE_PCT (50%) AND at least one point actually triggered
-        # in that direction. The old raw point-count threshold
-        # (max(2, 30% of strategy count)) had no percentage comparison at
-        # all, so a backtest "signal" wasn't necessarily something live
-        # would ever fire — this made backtest results not a reliable
-        # preview of live behavior.
-        min_vote_pct = PaperTradingEngine.MIN_VOTE_PCT
-        logger.info(f"Vote gate: >= {min_vote_pct:.0f}% of triggered points in one direction (matches live _check_signal)")
+        # NOTE: no vote-percentage panel gate, regime filter, correlation
+        # filter, gap filter, or entry-quality veto remain in this loop —
+        # a strategy triggering is the only condition for a trade. See the
+        # inline notes further down where each was removed.
+        logger.info("Gate-free mode: a strategy trigger places a trade directly (matches live _check_signal)")
 
         min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
         logger.info(f"Min-bar gate set to {min_bars_needed}")
+        strat_timeframe = _get_strategy_timeframe(self.strategies_dict)
+        logger.info(f"Timeframe set to {strat_timeframe} (from strategy module's own TIMEFRAME setting)")
 
         # One-time NIFTY 5-min history fetch spanning the whole backtest
         # range, used to reproduce live's market_trend/market_regime gates
@@ -3652,7 +3673,7 @@ class BacktestEngine:
         # fallback when get_nifty_data() returns None.
         nifty_ctx = self._fetch_nifty_context(kite, start, end)
         if nifty_ctx is not None and not nifty_ctx.empty:
-            logger.info(f"NIFTY context loaded: {len(nifty_ctx)} bars for regime/correlation gating")
+            logger.info(f"NIFTY context loaded: {len(nifty_ctx)} bars (informational only — no longer used to gate trades)")
         else:
             logger.warning("NIFTY context unavailable — regime/correlation gates disabled for this run")
 
@@ -3671,7 +3692,7 @@ class BacktestEngine:
             token = symbol_map[sym]['token']
             try:
                 _hist_limiter.wait(f"backtest {sym}")
-                data = kite.historical_data(token, start, end, "3minute")
+                data = kite.historical_data(token, start, end, strat_timeframe)
                 if data:
                     _first_dt = data[0].get('date')
                     _last_dt = data[-1].get('date')
@@ -3822,18 +3843,21 @@ class BacktestEngine:
             if vlc < 60:
                 logger.debug(
                     f"  {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
-                    f"b={b:.1f} ({buy_pct:.0f}%)  s={s:.1f} ({sell_pct:.0f}%)  (gate={min_vote_pct:.0f}%)"
+                    f"b={b:.1f} ({buy_pct:.0f}%)  s={s:.1f} ({sell_pct:.0f}%)"
                 )
                 vote_log_count[sym] = vlc + 1
 
-            # Same formula as live's buy_ok/sell_ok in _check_signal():
-            # percentage of triggered points >= MIN_VOTE_PCT, AND at least
-            # one point actually triggered in that direction (b/s >= 1.0).
-            buy_ok = buy_pct >= min_vote_pct and b >= 1.0
-            sell_ok = (
-                sell_pct >= min_vote_pct and s >= 1.0
-                and self.trading_mode != 'DELIVERY'
-            )
+            # NOTE: the MIN_VOTE_PCT panel gate, the regime filter
+            # (skip_breakout), the correlation filter (fighting NIFTY
+            # trend on a HEAVYWEIGHTS symbol), the gap-up/gap-down filter,
+            # and the _check_entry_quality() veto (volume surge, candle
+            # pattern, VWAP/RSI/EMA50 extension) that used to all sit in
+            # this block have been removed entirely. A strategy triggering
+            # (b/s >= 1.0) is now the ONLY condition — this mirrors the
+            # same change in PaperTradingEngine._check_signal(), so
+            # backtest results stay a faithful preview of live behavior.
+            buy_ok = b >= 1.0
+            sell_ok = s >= 1.0 and self.trading_mode != 'DELIVERY'
             if buy_ok and sell_ok:
                 # Same tiebreak as live: whichever side scores higher wins
                 # when both directions independently qualify.
@@ -3853,10 +3877,8 @@ class BacktestEngine:
             # Determine which individual strategies actually triggered on
             # this bar and pick a "best" one, mirroring live's
             # direction_triggered/best_strategy logic in _check_signal().
-            # Needed so category-based checks below (breakout regime skip,
-            # VWAP/RSI/EMA50 extension vetoes inside _check_entry_quality)
-            # are evaluated against the strategy that actually fired,
-            # instead of being skipped entirely as backtest previously did.
+            # Purely for logging/labeling the trade now — no longer used
+            # to gate anything.
             all_triggered = []
             for _name, _func in self.strategies_dict.items():
                 try:
@@ -3880,59 +3902,8 @@ class BacktestEngine:
             if not best_strategy:
                 best_strategy = "VOTE_SIGNAL"
 
-            # Regime filter — mirrors live's skip_breakout: don't take a
-            # BREAKOUT-category strategy's signal (e.g. ORB) while NIFTY is
-            # RANGING (ADX <= 25). Previously backtest had no NIFTY context
-            # at all, so it would happily take breakout signals live's
-            # _check_signal() would refuse outright.
-            market_trend, market_regime = self._market_context_at(nifty_ctx, bar_dt)
-            if (
-                market_regime == "RANGING"
-                and AVAILABLE_STRATEGY_META.get(best_strategy, {}).get('category') == 'breakout'
-            ):
-                logger.debug(f"  {sym} {side} skipped — market RANGING, breakout strategy {best_strategy}")
-                continue
-
-            # Correlation filter — mirrors live's _corr_ok(): don't fight
-            # the index trend on a heavyweight constituent.
-            if market_trend == "BULLISH" and side == "SELL" and sym in HEAVYWEIGHTS:
-                continue
-            if market_trend == "BEARISH" and side == "BUY" and sym in HEAVYWEIGHTS:
-                continue
-
-            gap_ok = True
-            try:
-                dt_slice = dt_series.iloc[:i+1]
-                today_mask = (dt_slice.dt.date == bar_dt.date()).values
-                yesterday_prices = df_slice.loc[~today_mask, 'close']
-                if len(yesterday_prices) > 0:
-                    prev_close = float(yesterday_prices.iloc[-1])
-                    if prev_close > 0:
-                        gap_pct = (ltp - prev_close) / prev_close * 100
-                        if side == 'BUY' and gap_pct > 1.5:
-                            gap_ok = False
-                        if side == 'SELL' and gap_pct < -1.5:
-                            gap_ok = False
-            except Exception:
-                gap_ok = True
-            if not gap_ok:
-                continue
-
             price = ltp
             atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
-
-            # Post-vote entry-quality veto — mirrors live's
-            # _open_position_nolock(), which runs every signal through
-            # _check_entry_quality() (volume surge, VWAP/ATR extension,
-            # RSI overbought/oversold, EMA50 distance, adverse candle
-            # pattern on the trigger bar) AFTER the vote passes. This
-            # method was already fully ported into BacktestEngine but was
-            # never actually called, so backtest was taking every
-            # vote-qualified signal live would go on to reject on quality.
-            quality_ok, _quality_reason = self._check_entry_quality(df_w, ind_w, side, sym, bar_dt, best_strategy)
-            if not quality_ok:
-                logger.debug(f"  {sym} {side} rejected by entry quality: {_quality_reason}")
-                continue
 
             if atr and atr > 0:
                 target, stoploss = self._calculate_atr_targets(price, atr, side)

@@ -61,6 +61,14 @@ logger = logging.getLogger(__name__)
 MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer (see WINDOW LIMITATION note)
 EMA_DIFF_THRESHOLD_PCT = 0.50  # required |EMA20-EMA50| / EMA50 * 100 before entry
 
+# TIMEFRAME: this strategy's own candle interval. ultimate_scanner.py reads
+# this directly off the module (via _get_strategy_timeframe()) instead of
+# hardcoding "3minute" centrally — so this file is the single source of
+# truth for what data it runs on, in both live and backtest. Valid Kite
+# Connect intervals: 'minute', '3minute', '5minute', '10minute',
+# '15minute', '30minute', '60minute', 'day'.
+TIMEFRAME = "3minute"
+
 
 def _session_start_idx(df):
     """
