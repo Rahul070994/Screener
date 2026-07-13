@@ -248,13 +248,36 @@ all_strategies = {
 }
 
 # --------------- METADATA ---------------
-# Direction now matches the function names directly — no inversion.
-# category='trend': this strategy enters WITH an already-established
-# (and now momentum-confirmed) trend rather than at a fresh breakout, so
-# it stays subject to the engine's normal overextension vetoes in
-# _check_entry_quality (skip_extension_checks only exempts
-# 'breakout'/'momentum' categories).
+# Direction matches the function names directly — no inversion.
+#
+# category='momentum': matches ultimate_scanner.py's own
+# skip_extension_checks = category in ('breakout', 'momentum'), so the
+# VWAP/ATR-extension, RSI-overbought/oversold and >2%-from-EMA50
+# "counter-trend" vetoes inside _check_entry_quality are skipped. This is
+# correct for this strategy: Step 3 (EMA Difference >= 0.50%) IS the
+# extension, by design — the signal only fires once price/EMA have
+# already moved away from each other, so the generic "don't chase an
+# extended move" vetoes would fight the strategy's own entry condition.
+#
+# skip_quality_checks=True: per the spec, this strategy uses ONLY
+# EMA20/EMA50 — "No RSI. No MACD. No ADX. No Volume filter. No ATR
+# filter. No Supertrend." ultimate_scanner.py's _check_entry_quality()
+# also runs a volume-surge veto (current bar volume must be >= 1.3x the
+# 10-bar average, on top of a separate time-of-day low-volume floor) and
+# a bearish/bullish reversal-candle veto — and unlike the
+# VWAP/RSI/EMA50 checks above, BOTH of those run unconditionally,
+# regardless of category. That is what was silently rejecting every
+# signal: the backtest log showed EMA_MOMENTUM_BUY/SELL firing
+# repeatedly (correct — the strategy layer was fine) but
+# "BACKTEST COMPLETE: No trades executed" (the generic quality gate was
+# vetoing 100% of them, almost always on the volume-surge check, since
+# this strategy's entries are momentum-confirmation entries, not
+# volume-spike entries). skip_quality_checks tells
+# _check_entry_quality() (both the live and backtest versions, see the
+# matching edit in ultimate_scanner.py) to bypass its volume and candle
+# vetoes for this strategy, so the ONLY thing gating entry is the
+# 5-step EMA logic in this file, exactly as documented.
 strategy_meta = {
-    'EMA_MOMENTUM_BUY': {'direction': 'BUY', 'category': 'trend'},
-    'EMA_MOMENTUM_SELL': {'direction': 'SELL', 'category': 'trend'},
+    'EMA_MOMENTUM_BUY': {'direction': 'BUY', 'category': 'momentum', 'skip_quality_checks': True},
+    'EMA_MOMENTUM_SELL': {'direction': 'SELL', 'category': 'momentum', 'skip_quality_checks': True},
 }

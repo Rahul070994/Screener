@@ -2072,8 +2072,22 @@ class PaperTradingEngine:
             now = datetime.now()
             now_mins = now.hour * 60 + now.minute
 
-            category = AVAILABLE_STRATEGY_META.get(strategy_name, {}).get('category', 'default')
+            meta = AVAILABLE_STRATEGY_META.get(strategy_name, {})
+            category = meta.get('category', 'default')
             skip_extension_checks = category in ('breakout', 'momentum')
+            # skip_quality_checks: some strategies (e.g. a pure EMA20/EMA50
+            # momentum-confirmation strategy) declare in their own
+            # strategy_meta that NOTHING besides their own entry logic
+            # should gate them — no volume-surge requirement, no
+            # candle-reversal veto. Previously the volume-surge check and
+            # candle-pattern veto below ran unconditionally for every
+            # strategy regardless of category, which silently rejected
+            # 100% of that strategy's signals (they'd log as fired, but
+            # never actually open a position) even though its category
+            # already exempted it from the VWAP/RSI/EMA50 checks further
+            # down. Honor the flag before running ANY of the checks.
+            if meta.get('skip_quality_checks'):
+                return True, None
 
             def _iv(key, fallback=0.0):
                 try:
@@ -4217,8 +4231,20 @@ class BacktestEngine:
             price = float(df['close'].iloc[-1])
             now_mins = bar_dt.hour * 60 + bar_dt.minute
 
-            category = AVAILABLE_STRATEGY_META.get(strategy_name, {}).get('category', 'default')
+            meta = AVAILABLE_STRATEGY_META.get(strategy_name, {})
+            category = meta.get('category', 'default')
             skip_extension_checks = category in ('breakout', 'momentum')
+            # See matching comment in PaperTradingEngine._check_entry_quality
+            # — strategies that mark skip_quality_checks=True in their own
+            # strategy_meta bypass the volume-surge and candle-pattern
+            # vetoes entirely, not just the extension checks below. Without
+            # this, backtest silently rejected every single vote-qualified
+            # EMA_MOMENTUM_BUY/SELL signal (visible in the log as "BUY: ..."
+            # lines from the strategy firing, immediately followed by
+            # "BACKTEST COMPLETE: No trades executed" because none of them
+            # ever passed this gate).
+            if meta.get('skip_quality_checks'):
+                return True, None
 
             def _iv(key, fallback=0.0):
                 try:
