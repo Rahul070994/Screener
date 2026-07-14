@@ -202,6 +202,8 @@ var _backtestMinHoldDays = (typeof CURRENT_RISK !== 'undefined' && CURRENT_RISK.
 var _backtestRunning = false;
 var _backtestResults = null;
 var _backtestPollTimer = null;
+var _backtestPage = 1;
+var _backtestPageSize = 25;
 var _lastOrderCount=-1;
 var _prevIndices={};
 var ptTab='overview', ptData={};
@@ -654,9 +656,15 @@ function renderPTBacktest(el) {
                 </div>
             </div>
             <div id="backtestResults" style="display:${results ? 'block' : 'none'};background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px;">
-                <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">Results</h3>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <h3 style="color:var(--text1);font-size:14px;margin:0;">Results</h3>
+                    <button class="btn" onclick="exportBacktestJSON()" id="backtestExportBtn" style="padding:6px 12px;font-size:11px;">
+                        <i class="fas fa-download"></i> Export JSON
+                    </button>
+                </div>
                 <div id="backtestStats" class="rgrid4" style="margin-bottom:16px;"></div>
                 <div id="backtestTrades" style="overflow-x:auto;"></div>
+                <div id="backtestPagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:11px;color:var(--text3);font-family:Space Mono,monospace;"></div>
             </div>
         </div>
     `;
@@ -710,6 +718,17 @@ function renderPTBacktest(el) {
     });
 }
 
+function _fmtBacktestDateTime(iso){
+    if(!iso) return '—';
+    var d = new Date(iso);
+    if(isNaN(d.getTime())){
+        var s = String(iso);
+        return s.length>=16 ? s.slice(0,10)+' '+s.slice(11,16) : (s || '—');
+    }
+    var pad=n=>String(n).padStart(2,'0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+
 function _displayBacktestResults(res){
     var statsDiv = document.getElementById('backtestStats');
     var tradesDiv = document.getElementById('backtestTrades');
@@ -721,21 +740,34 @@ function _displayBacktestResults(res){
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Net P&L</span><br><span style="font-family:Space Mono;font-size:16px;color:${res.net_pnl>=0?'var(--green)':'var(--red)'};">${res.net_pnl>=0?'+':''}₹${res.net_pnl.toFixed(2)}</span></div>
         <div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;"><span style="color:var(--text3);">Final Wallet</span><br><span style="font-family:Space Mono;font-size:16px;color:var(--gold);">₹${res.final_wallet.toFixed(2)}</span></div>
     `;
+    _backtestPage = 1;
+    _renderBacktestTradesPage();
+    document.getElementById('backtestResults').style.display='block';
+}
+
+function _renderBacktestTradesPage(){
+    var res = _backtestResults;
+    var tradesDiv = document.getElementById('backtestTrades');
+    var pagDiv = document.getElementById('backtestPagination');
+    if (!tradesDiv || !res) return;
+    var modeLabel = res.mode==='DELIVERY' ? 'Delivery (CNC)' : 'Intraday (MIS)';
     var mhdBadge = (res.mode==='DELIVERY' && res.min_hold_days!=null) ? ' <span class="b bn">Min Hold: '+res.min_hold_days+'d</span>' : '';
     var modeBadge = '<div style="margin-bottom:10px;font-size:10px;color:var(--text3);font-family:Space Mono,monospace">Mode: <span class="b bg-gold">'+modeLabel+'</span>'+mhdBadge+'</div>';
-    function _fmtDateTime(iso){
-        if(!iso) return '—';
-        var d = new Date(iso);
-        if(isNaN(d.getTime())){
-            var s = String(iso);
-            return s.length>=16 ? s.slice(0,10)+' '+s.slice(11,16) : (s || '—');
-        }
-        var pad=n=>String(n).padStart(2,'0');
-        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
-    }
-    if(res.trades && res.trades.length){
+
+    var trades = (res.trades && res.trades.length) ? res.trades : [];
+    var total = trades.length;
+
+    if (total) {
+        var pageSize = _backtestPageSize;
+        var totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(total / pageSize));
+        if (_backtestPage > totalPages) _backtestPage = totalPages;
+        if (_backtestPage < 1) _backtestPage = 1;
+        var startIdx = pageSize === -1 ? 0 : (_backtestPage - 1) * pageSize;
+        var endIdx = pageSize === -1 ? total : Math.min(startIdx + pageSize, total);
+        var pageTrades = trades.slice(startIdx, endIdx);
+
         var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>Target</th><th>SL</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
-        res.trades.forEach(t=>{
+        pageTrades.forEach(t=>{
             var entryDt = new Date(t.entry_time);
             var exitDt = new Date(t.exit_time);
             var heldTxt = '—';
@@ -747,14 +779,55 @@ function _displayBacktestResults(res){
             }
             var tgtTxt = (t.target!=null) ? '₹'+Number(t.target).toFixed(2) : '—';
             var slTxt = (t.stoploss!=null) ? '₹'+Number(t.stoploss).toFixed(2) : '—';
-            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="num" style="color:var(--green-b)">${tgtTxt}</td><td class="num" style="color:var(--red-b)">${slTxt}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtBacktestDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtBacktestDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="num" style="color:var(--green-b)">${tgtTxt}</td><td class="num" style="color:var(--red-b)">${slTxt}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
         });
         html+='</tbody></table>';
         tradesDiv.innerHTML=html;
+
+        if (pagDiv) {
+            var rangeTxt = total ? (startIdx+1)+'–'+endIdx+' of '+total+' trades' : '0 trades';
+            var pageSizeOpts = [25,50,100,200].map(function(sz){
+                return '<option value="'+sz+'" '+(pageSize===sz?'selected':'')+'>'+sz+' / page</option>';
+            }).join('') + '<option value="-1" '+(pageSize===-1?'selected':'')+'>All</option>';
+            pagDiv.innerHTML = `
+                <div>${rangeTxt}</div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <select onchange="setBacktestPageSize(this.value)" style="padding:4px 6px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:11px;">${pageSizeOpts}</select>
+                    <button class="btn" onclick="changeBacktestPage(-1)" ${_backtestPage<=1?'disabled':''} style="padding:4px 10px;font-size:11px;"><i class="fas fa-chevron-left"></i></button>
+                    <span style="min-width:70px;text-align:center;">Page ${_backtestPage} / ${totalPages}</span>
+                    <button class="btn" onclick="changeBacktestPage(1)" ${_backtestPage>=totalPages?'disabled':''} style="padding:4px 10px;font-size:11px;"><i class="fas fa-chevron-right"></i></button>
+                </div>
+            `;
+        }
     } else {
         tradesDiv.innerHTML=modeBadge+'<p style="color:var(--text3);font-size:12px;">No trades executed.</p>';
+        if (pagDiv) pagDiv.innerHTML='';
     }
-    document.getElementById('backtestResults').style.display='block';
+}
+
+function changeBacktestPage(delta){
+    _backtestPage += delta;
+    _renderBacktestTradesPage();
+}
+
+function setBacktestPageSize(val){
+    _backtestPageSize = parseInt(val);
+    _backtestPage = 1;
+    _renderBacktestTradesPage();
+}
+
+function exportBacktestJSON(){
+    if (!_backtestResults) return;
+    var blob = new Blob([JSON.stringify(_backtestResults, null, 2)], {type: 'application/json'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    a.href = url;
+    a.download = 'backtest_results_' + stamp + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 function runBacktest(){
