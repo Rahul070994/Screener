@@ -362,7 +362,7 @@ var tgt = d.target_pct!=null ? d.target_pct : 0;
 var sl = d.sl_pct!=null ? d.sl_pct : 0;
 var line=document.getElementById('bannerModeLine');
 if(line){
-    line.innerHTML = '80% wallet · ATR risk sizing (1%/trade) · [' + modeLabel + '] Target +' + tgt.toFixed(2)
+    line.innerHTML = '80% wallet · Margin-based sizing · [' + modeLabel + '] Target +' + tgt.toFixed(2)
         + '% · SL -' + sl.toFixed(2) + '% (Settings → Target &amp; Stop Loss) · ' + _modeWindowTxt(mode)
         + ' · Score≥35 · Vote≥50% · Vol≥1.3×';
 }
@@ -609,7 +609,7 @@ function renderPTBacktest(el) {
             <h2 style="color:var(--gold);font-family:Space Mono,monospace;font-size:18px;margin-bottom:12px;">📈 Backtest</h2>
             <p style="color:var(--text3);font-size:12px;margin-bottom:16px;">Test your selected strategy against all NIFTY 200 stocks over a custom date range.</p>
             <div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;">
-                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;align-items:end;">
+                <div class="rgrid4">
                     <div>
                         <label style="display:block;font-size:11px;color:var(--text3);margin-bottom:4px;">Initial Wallet (₹)</label>
                         <input type="number" id="backtestWallet" value="${wallet}" step="10000" min="1000" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text0);font-family:Space Mono,monospace;font-size:12px;">
@@ -655,7 +655,7 @@ function renderPTBacktest(el) {
             </div>
             <div id="backtestResults" style="display:${results ? 'block' : 'none'};background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:16px;">
                 <h3 style="color:var(--text1);font-size:14px;margin-bottom:12px;">Results</h3>
-                <div id="backtestStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;"></div>
+                <div id="backtestStats" class="rgrid4" style="margin-bottom:16px;"></div>
                 <div id="backtestTrades" style="overflow-x:auto;"></div>
             </div>
         </div>
