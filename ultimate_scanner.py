@@ -17,7 +17,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
 import webbrowser, os, time, json, threading, sys, importlib
-from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for, send_file
+from io import BytesIO
 from markupsafe import escape
 import warnings, traceback, shutil, glob
 from collections import deque
@@ -3603,7 +3604,7 @@ class BacktestEngine:
             'win_rate': round(win_rate, 2),
             'net_pnl': round(net_pnl, 2),
             'final_wallet': round(final_wallet, 2),
-            'trades': trades[-50:],
+            'trades': trades,  # full list — UI paginates/exports client-side now
             'mode': self.trading_mode,
             'target_pct': round(self.target_pct * 100, 2),
             'stoploss_pct': round(self.stoploss_pct * 100, 2),
@@ -4238,6 +4239,59 @@ def backtest_status():
     if not engine:
         return jsonify({'status': 'idle'})
     return jsonify(engine.progress)
+
+@app.route('/api/backtest/export')
+def backtest_export():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'msg': 'Not logged in'}), 401
+    engine = UserManager._backtest_engines.get(user_id)
+    if not engine:
+        return jsonify({'status': 'error', 'msg': 'No backtest has been run yet'}), 404
+    progress = engine.progress
+    results = progress.get('results')
+    if progress.get('status') != 'done' or not results:
+        return jsonify({'status': 'error', 'msg': 'No completed backtest results to export'}), 400
+
+    trades = results.get('trades', [])
+    columns = [
+        'symbol', 'side', 'strategy', 'entry_time', 'entry_price', 'exit_time',
+        'exit_price', 'qty', 'target', 'stoploss', 'gross_pnl', 'total_charges',
+        'brokerage', 'stt', 'exchange_charge', 'gst', 'stamp_duty', 'pnl', 'exit_reason',
+    ]
+    df = pd.DataFrame(trades, columns=columns) if trades else pd.DataFrame(columns=columns)
+
+    summary = pd.DataFrame([{
+        'Mode': results.get('mode'),
+        'Total Trades': results.get('total_trades'),
+        'Win Trades': results.get('win_trades'),
+        'Loss Trades': results.get('loss_trades'),
+        'Win Rate %': results.get('win_rate'),
+        'Net P&L': results.get('net_pnl'),
+        'Final Wallet': results.get('final_wallet'),
+        'Target %': results.get('target_pct'),
+        'Stop Loss %': results.get('stoploss_pct'),
+        'Min Hold Days': results.get('min_hold_days'),
+    }])
+
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        summary.to_excel(writer, sheet_name='Summary', index=False)
+        df.to_excel(writer, sheet_name='Trades', index=False)
+        for sheet_name, sheet_df in (('Summary', summary), ('Trades', df)):
+            ws = writer.sheets[sheet_name]
+            for i, col in enumerate(sheet_df.columns, start=1):
+                width = max(12, min(28, int(sheet_df[col].astype(str).str.len().max() if len(sheet_df) else 0) + 4))
+                ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width
+    buf.seek(0)
+
+    fname = f"backtest_{results.get('mode', 'RUN')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=fname,
+    )
 
 # ─── HELPER FOR SYMBOL MAP ──────────────────────────────────
 def get_symbol_map():
