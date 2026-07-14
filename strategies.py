@@ -26,6 +26,18 @@ _NON_STRATEGY_FILES = {
 
 STRATEGY_REGISTRY = {}
 STRATEGY_META = {}
+# Optional per-strategy diagnostics functions: {strategy_name: fn(df, ind) -> dict}.
+# A strategy module MAY define a module-level `strategy_diagnostics` dict
+# (same shape/pattern as `strategy_meta` above) mapping its function names to
+# a diagnostics callable that returns a small {label: value} dict describing
+# the strategy's own decision variables for the current bar (e.g. EMA20,
+# EMA50, Diff% for an EMA-crossover strategy). This is entirely optional and
+# additive — a strategy that doesn't define it just contributes nothing here,
+# and the Signal Log UI simply shows nothing extra for that strategy. This is
+# what lets the live Signal Log show "whatever the strategy actually computed"
+# dynamically per-strategy, without ultimate_scanner.py hardcoding any
+# knowledge of individual strategies' internals.
+STRATEGY_DIAGNOSTICS = {}
 _STRATEGY_SOURCE_MODULE = {}
 
 def _load_module_from_file(module_name, file_path):
@@ -70,6 +82,7 @@ def _register_module(name, mod):
     if all_strats is None:
         return False
     meta = getattr(mod, 'strategy_meta', {}) or {}
+    diagnostics = getattr(mod, 'strategy_diagnostics', {}) or {}
     STRATEGY_REGISTRY[name] = all_strats
     for strat_name, fn in all_strats.items():
         if strat_name in _STRATEGY_SOURCE_MODULE and _STRATEGY_SOURCE_MODULE[strat_name] != name:
@@ -77,6 +90,12 @@ def _register_module(name, mod):
                   f"'{_STRATEGY_SOURCE_MODULE[strat_name]}' and '{name}' — keeping '{name}' version")
         _STRATEGY_SOURCE_MODULE[strat_name] = name
         STRATEGY_META[strat_name] = meta.get(strat_name, STRATEGY_META.get(strat_name, {}))
+        diag_fn = diagnostics.get(strat_name)
+        if diag_fn is not None:
+            if not callable(diag_fn):
+                print(f"⚠ Skipping strategy_diagnostics['{strat_name}'] in '{name}': not callable")
+            else:
+                STRATEGY_DIAGNOSTICS[strat_name] = diag_fn
     print(f"✓ {name} imported successfully ({len(all_strats)} strategies)")
     return True
 

@@ -1,56 +1,4 @@
-# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v6)
-# ================================================================
-# Rewritten to match the exact spec provided:
-#
-#   BUY  Step 1: EMA20 crosses ABOVE EMA50 (prev EMA20<=EMA50, now EMA20>EMA50)
-#        Step 2: keep monitoring every subsequent candle — no fixed limit —
-#                until either the eligibility conditions below are met, or
-#                EMA20 crosses back BELOW EMA50 (setup cancelled).
-#        Step 3: EMA Difference % = ((EMA20 - EMA50) / EMA50) * 100 >= 0.50
-#        Step 4: on that same candle, Close > EMA20 AND Close > EMA50
-#                (completed-candle values only, no intrabar data)
-#        Step 5: signal fires on the candle where Step 3 + Step 4 are BOTH
-#                true for the first time since the Step 1 crossover; entry
-#                itself happens at the next candle open via the engine's
-#                normal entry mechanism (this function only returns the
-#                signal, it does not place the order).
-#
-#   SELL is the exact mirror: EMA20 crosses BELOW EMA50, then
-#        EMA Difference % = ((EMA50 - EMA20) / EMA50) * 100 >= 0.50,
-#        with Close < EMA20 AND Close < EMA50 on that candle.
-#
-# Everything else from earlier versions (RSI filter, ADX/volatility filter,
-# volume-surge filter, and the v3 direction-label inversion in
-# strategy_meta) has been removed — it is not part of this spec.
-#
-# CALLING CONTRACT (unchanged from ultimate_scanner.py): every strategy is
-# called as func(df, ind), where `ind` is the DataFrame returned by
-# Indicators.calculate_all(), already sliced to MIN_BARS_REQUIRED bars,
-# with 'ema_20' / 'ema_50' columns. `df` has 'close'.
-#
-# WINDOW LIMITATION: because the engine only ever hands this function the
-# last MIN_BARS_REQUIRED bars, "no fixed candle limit" for Step 2
-# monitoring is bounded in practice by that window — if the EMA20/EMA50
-# crossover happened further back than MIN_BARS_REQUIRED bars ago, this
-# function can no longer see it and will report "no active setup" until a
-# fresh crossover happens inside the visible window.
-#
-# SAME-DAY (INTRADAY) BOUNDARY: ultimate_scanner.py's BacktestEngine and
-# live _check_signal() both fetch one continuous multi-day "3minute"
-# history per symbol and slice the last MIN_BARS_REQUIRED bars as a
-# rolling window — there is NO session reset in that windowing. Early in a
-# session (e.g. 10:00 AM with only ~15 bars since 9:15 open) that window
-# reaches back into the PREVIOUS trading day's candles, so a naive
-# backward scan for "the last crossover" can find one from yesterday's
-# session and treat it as still "active" today — which is wrong for an
-# intraday (MIS) strategy where every position is squared off and nothing
-# carries over from one session to the next. To fix this, every scan below
-# is bounded to bars that share the same calendar date as the most recent
-# (current) bar in the window, using the `date` column ultimate_scanner.py
-# always includes in `df` (and therefore, positionally, in `ind`). If no
-# `date` column is present (defensive fallback only), scans fall back to
-# the full window rather than failing closed.
-# ================================================================
+# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v7): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES; SELL is the mirror with Open/Close < both EMAs.
 
 import numpy as np
 import pandas as pd
@@ -58,35 +6,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer (see WINDOW LIMITATION note)
+MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer
 EMA_DIFF_THRESHOLD_PCT = 0.50  # required |EMA20-EMA50| / EMA50 * 100 before entry
-
-# TIMEFRAME: this strategy's own candle interval. ultimate_scanner.py reads
-# this directly off the module (via _get_strategy_timeframe()) instead of
-# hardcoding "3minute" centrally — so this file is the single source of
-# truth for what data it runs on, in both live and backtest. Valid Kite
-# Connect intervals: 'minute', '3minute', '5minute', '10minute',
-# '15minute', '30minute', '60minute', 'day'.
-TIMEFRAME = "3minute"
+MAX_SIGNAL_DELAY_MINUTES = 30  # crossover must confirm within this window or it's stale
+TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_scanner.py
 
 
 def _session_start_idx(df):
-    """
-    Returns the earliest positional index in `df` whose calendar date
-    matches the LAST bar's calendar date — i.e. the index of the first
-    candle of the current trading session inside the visible window.
-    Falls back to 0 (whole window) if `date` is missing or unparsable, so
-    a data-shape surprise degrades to the old (pre-fix) behavior instead
-    of silently breaking the strategy.
-    """
+    """Index of the first candle of today's session inside the window (0 if unknown)."""
     if 'date' not in df.columns or len(df) == 0:
         return 0
     try:
         dates = pd.to_datetime(df['date'])
         last_date = dates.iloc[-1].date()
         same_day = dates.dt.date.values == last_date
-        # first True index in same_day (dates are chronological, so the
-        # True run is contiguous and ends at the last bar)
         idxs = np.flatnonzero(same_day)
         return int(idxs[0]) if len(idxs) else 0
     except Exception:
@@ -94,24 +27,10 @@ def _session_start_idx(df):
 
 
 def _find_last_crossover(ind, session_start=0):
-    """
-    Scan backward from the most recent bar to find the last EMA20/EMA50
-    crossover event, never looking earlier than `session_start` (the
-    first bar of today's session inside the current window) — see
-    SAME-DAY (INTRADAY) BOUNDARY note above.
-
-    Returns (direction, idx):
-      direction = 'up'   -> EMA20 crossed above EMA50 (bullish setup started)
-      direction = 'down' -> EMA20 crossed below EMA50 (bearish setup started)
-      direction = None   -> no crossover found inside today's visible bars
-      idx = positional index (0-based, into `ind`) of the bar where the
-            crossover happened; None if direction is None.
-    """
+    """Scan backward for the last EMA20/EMA50 crossover within today's session; returns (direction, idx)."""
     e20 = ind['ema_20'].values
     e50 = ind['ema_50'].values
     n = len(ind)
-    # i must stay > session_start so that i-1 (the "previous candle" in the
-    # comparison) is also from today's session, not yesterday's last bar.
     lower_bound = max(1, session_start + 1)
     for i in range(n - 1, lower_bound - 1, -1):
         p20, p50, c20, c50 = e20[i - 1], e50[i - 1], e20[i], e50[i]
@@ -124,46 +43,50 @@ def _find_last_crossover(ind, session_start=0):
     return None, None
 
 
-def _eligible_bar(e20_val, e50_val, close_val, want_bullish):
-    """
-    Checks Step 3 (EMA Difference >= 0.50%) and Step 4 (close confirmation)
-    for a single completed candle, given precomputed EMA20/EMA50/close
-    values for that candle.
-    """
-    if np.isnan(e20_val) or np.isnan(e50_val) or e50_val == 0:
+def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish):
+    """Step 3 (EMA diff >= threshold) + Step 4 (Open AND Close beyond both EMAs) for one candle."""
+    if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or e50_val == 0:
         return False
     if want_bullish:
         diff_pct = ((e20_val - e50_val) / e50_val) * 100.0
-        return diff_pct >= EMA_DIFF_THRESHOLD_PCT and close_val > e20_val and close_val > e50_val
+        return (
+            diff_pct >= EMA_DIFF_THRESHOLD_PCT
+            and open_val > e20_val
+            and close_val > e20_val
+            and open_val > e50_val
+            and close_val > e50_val
+        )
     else:
         diff_pct = ((e50_val - e20_val) / e50_val) * 100.0
-        return diff_pct >= EMA_DIFF_THRESHOLD_PCT and close_val < e20_val and close_val < e50_val
+        return (
+            diff_pct >= EMA_DIFF_THRESHOLD_PCT
+            and open_val < e20_val
+            and close_val < e20_val
+            and open_val < e50_val
+            and close_val < e50_val
+        )
+
+
+def _minutes_between(df, idx_from, idx_to):
+    """Minutes between two bars' timestamps; None if 'date' is missing/unparsable."""
+    if 'date' not in df.columns:
+        return None
+    try:
+        dates = pd.to_datetime(df['date'])
+        delta = dates.iloc[idx_to] - dates.iloc[idx_from]
+        return delta.total_seconds() / 60.0
+    except Exception:
+        return None
 
 
 def _signal(df, ind, want_bullish):
-    """
-    Shared logic for both directions:
-      1. Find the most recent EMA20/EMA50 crossover in the window.
-      2. If its direction doesn't match what we're looking for, there is
-         no active setup for this side (either no crossover yet, or the
-         setup was cancelled by an opposite crossover) -> no signal.
-      3. Check Step 3 + Step 4 on the current (last) candle.
-      4. Make sure this is the FIRST candle since the crossover where
-         Step 3 + Step 4 both held — i.e. don't re-fire every bar while
-         price/EMA stay extended past the threshold.
-    """
+    """Find the latest same-side crossover, check it's not stale, then fire only on the first eligible bar since it."""
     if 'ema_20' not in ind.columns or 'ema_50' not in ind.columns:
         return False
     if len(df) < MIN_BARS_REQUIRED or len(ind) < 2:
         return False
 
-    # Bound crossover search + eligibility scan to TODAY's session only —
-    # see SAME-DAY (INTRADAY) BOUNDARY note in the module docstring. Without
-    # this, a crossover from a previous session (still present in the
-    # rolling multi-day window early in the day) gets treated as an
-    # "active" setup for today, which is wrong for an intraday strategy
-    # where nothing carries over between sessions.
-    session_start = _session_start_idx(df)
+    session_start = _session_start_idx(df)  # bound scan to today's session only
 
     direction, cross_idx = _find_last_crossover(ind, session_start=session_start)
     wanted_dir = 'up' if want_bullish else 'down'
@@ -173,37 +96,34 @@ def _signal(df, ind, want_bullish):
     e20 = ind['ema_20']
     e50 = ind['ema_50']
     close = df['close']
+    open_ = df['open']
     last_i = len(ind) - 1
+
+    age_minutes = _minutes_between(df, cross_idx, last_i)  # staleness guard
+    if age_minutes is not None and age_minutes > MAX_SIGNAL_DELAY_MINUTES:
+        return False
 
     e20_now = float(e20.iloc[last_i])
     e50_now = float(e50.iloc[last_i])
     close_now = float(close.iloc[last_i])
+    open_now = float(open_.iloc[last_i])
 
-    if not _eligible_bar(e20_now, e50_now, close_now, want_bullish):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish):
         return False
 
-    # Don't repeat-fire: confirm no earlier bar since the crossover already
-    # satisfied Step 3 + Step 4 (that earlier bar would have been the real
-    # signal candle).
-    for i in range(cross_idx + 1, last_i):
+    for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
         e20_i = float(e20.iloc[i])
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
-        if _eligible_bar(e20_i, e50_i, close_i, want_bullish):
+        open_i = float(open_.iloc[i])
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish):
             return False
 
     return True
 
 
 def confluence_buy(df, ind):
-    """
-    BUY signal — see module docstring for the full 5-step spec:
-      Step1: EMA20 crossed above EMA50 (somewhere in the visible window)
-      Step2: no opposite (bearish) crossover happened since then
-      Step3: EMA Difference % = (EMA20-EMA50)/EMA50*100 >= 0.50 on this candle
-      Step4: Close > EMA20 AND Close > EMA50 on this candle
-      Step5: fires on the first candle where Step3+Step4 both hold
-    """
+    """BUY: EMA20 crosses above EMA50, then Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50 on the first qualifying candle within the delay window."""
     try:
         signal = _signal(df, ind, want_bullish=True)
         if signal:
@@ -211,9 +131,10 @@ def confluence_buy(df, ind):
             e20 = float(ind['ema_20'].iloc[-1])
             e50 = float(ind['ema_50'].iloc[-1])
             close_now = float(df['close'].iloc[-1])
+            open_now = float(df['open'].iloc[-1])
             diff_pct = ((e20 - e50) / e50) * 100.0
             logger.info(
-                f"EMA_MOMENTUM_BUY: {sym} close={close_now:.2f} "
+                f"EMA_MOMENTUM_BUY: {sym} open={open_now:.2f} close={close_now:.2f} "
                 f"ema20={e20:.2f} ema50={e50:.2f} ema_diff_pct={diff_pct:.2f}"
             )
         return bool(signal)
@@ -223,14 +144,7 @@ def confluence_buy(df, ind):
 
 
 def confluence_sell(df, ind):
-    """
-    SELL signal — exact mirror of confluence_buy:
-      Step1: EMA20 crossed below EMA50
-      Step2: no opposite (bullish) crossover happened since then
-      Step3: EMA Difference % = (EMA50-EMA20)/EMA50*100 >= 0.50 on this candle
-      Step4: Close < EMA20 AND Close < EMA50 on this candle
-      Step5: fires on the first candle where Step3+Step4 both hold
-    """
+    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50."""
     try:
         signal = _signal(df, ind, want_bullish=False)
         if signal:
@@ -238,9 +152,10 @@ def confluence_sell(df, ind):
             e20 = float(ind['ema_20'].iloc[-1])
             e50 = float(ind['ema_50'].iloc[-1])
             close_now = float(df['close'].iloc[-1])
+            open_now = float(df['open'].iloc[-1])
             diff_pct = ((e50 - e20) / e50) * 100.0
             logger.info(
-                f"EMA_MOMENTUM_SELL: {sym} close={close_now:.2f} "
+                f"EMA_MOMENTUM_SELL: {sym} open={open_now:.2f} close={close_now:.2f} "
                 f"ema20={e20:.2f} ema50={e50:.2f} ema_diff_pct={diff_pct:.2f}"
             )
         return bool(signal)
@@ -249,42 +164,62 @@ def confluence_sell(df, ind):
         return False
 
 
-# --------------- REGISTRY ---------------
+# Optional diagnostics for the live Signal Log UI — shows the strategy's own decision variables per bar, doesn't affect entry logic.
+def _ema_momentum_diagnostics(df, ind):
+    try:
+        if 'ema_20' not in ind.columns or 'ema_50' not in ind.columns or len(ind) < 2:
+            return {}
+        session_start = _session_start_idx(df)
+        direction, cross_idx = _find_last_crossover(ind, session_start=session_start)
+        e20 = float(ind['ema_20'].iloc[-1])
+        e50 = float(ind['ema_50'].iloc[-1])
+        close = float(df['close'].iloc[-1])
+        open_now = float(df['open'].iloc[-1])
+        if np.isnan(e20) or np.isnan(e50) or e50 == 0:
+            return {}
+        if direction == 'up':
+            diff_pct = ((e20 - e50) / e50) * 100.0
+        elif direction == 'down':
+            diff_pct = ((e50 - e20) / e50) * 100.0
+        else:
+            diff_pct = 0.0
+        setup = 'Bullish (EMA20>EMA50)' if direction == 'up' else 'Bearish (EMA20<EMA50)' if direction == 'down' else 'No crossover yet'
+        out = {
+            'EMA20': round(e20, 2),
+            'EMA50': round(e50, 2),
+            'Open': round(open_now, 2),
+            'Close': round(close, 2),
+            'Diff%': round(diff_pct, 2),
+            'Threshold%': EMA_DIFF_THRESHOLD_PCT,
+            'Setup': setup,
+        }
+        if cross_idx is not None:
+            try:
+                out['Crossed@'] = str(df['date'].iloc[cross_idx])[-8:-3] if 'date' in df.columns else cross_idx
+            except Exception:
+                pass
+            age_minutes = _minutes_between(df, cross_idx, len(df) - 1)
+            if age_minutes is not None:
+                out['SetupAge(min)'] = round(age_minutes, 1)
+                out['MaxAge(min)'] = MAX_SIGNAL_DELAY_MINUTES
+                out['Stale'] = age_minutes > MAX_SIGNAL_DELAY_MINUTES
+        return out
+    except Exception as e:
+        logger.debug(f"EMA_MOMENTUM diagnostics error: {e}")
+        return {}
+
+
+strategy_diagnostics = {
+    'EMA_MOMENTUM_BUY': _ema_momentum_diagnostics,
+    'EMA_MOMENTUM_SELL': _ema_momentum_diagnostics,
+}
+
 all_strategies = {
     'EMA_MOMENTUM_BUY': confluence_buy,
     'EMA_MOMENTUM_SELL': confluence_sell,
 }
 
-# --------------- METADATA ---------------
-# Direction matches the function names directly — no inversion.
-#
-# category='momentum': matches ultimate_scanner.py's own
-# skip_extension_checks = category in ('breakout', 'momentum'), so the
-# VWAP/ATR-extension, RSI-overbought/oversold and >2%-from-EMA50
-# "counter-trend" vetoes inside _check_entry_quality are skipped. This is
-# correct for this strategy: Step 3 (EMA Difference >= 0.50%) IS the
-# extension, by design — the signal only fires once price/EMA have
-# already moved away from each other, so the generic "don't chase an
-# extended move" vetoes would fight the strategy's own entry condition.
-#
-# skip_quality_checks=True: per the spec, this strategy uses ONLY
-# EMA20/EMA50 — "No RSI. No MACD. No ADX. No Volume filter. No ATR
-# filter. No Supertrend." ultimate_scanner.py's _check_entry_quality()
-# also runs a volume-surge veto (current bar volume must be >= 1.3x the
-# 10-bar average, on top of a separate time-of-day low-volume floor) and
-# a bearish/bullish reversal-candle veto — and unlike the
-# VWAP/RSI/EMA50 checks above, BOTH of those run unconditionally,
-# regardless of category. That is what was silently rejecting every
-# signal: the backtest log showed EMA_MOMENTUM_BUY/SELL firing
-# repeatedly (correct — the strategy layer was fine) but
-# "BACKTEST COMPLETE: No trades executed" (the generic quality gate was
-# vetoing 100% of them, almost always on the volume-surge check, since
-# this strategy's entries are momentum-confirmation entries, not
-# volume-spike entries). skip_quality_checks tells
-# _check_entry_quality() (both the live and backtest versions, see the
-# matching edit in ultimate_scanner.py) to bypass its volume and candle
-# vetoes for this strategy, so the ONLY thing gating entry is the
-# 5-step EMA logic in this file, exactly as documented.
+# category='momentum' skips the generic extension vetoes (correct here, since Step 3 IS the extension); skip_quality_checks=True bypasses volume/candle vetoes so only the EMA logic above gates entry.
 strategy_meta = {
     'EMA_MOMENTUM_BUY': {'direction': 'BUY', 'category': 'momentum', 'skip_quality_checks': True},
     'EMA_MOMENTUM_SELL': {'direction': 'SELL', 'category': 'momentum', 'skip_quality_checks': True},
