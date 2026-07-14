@@ -129,13 +129,16 @@ def _signal(df, ind, want_bullish):
     if age_minutes is not None and age_minutes > MAX_SIGNAL_DELAY_MINUTES:
         return False
 
+    # Breakout reference is now FROZEN at the crossover bar (inclusive) and
+    # never updated again for this setup.
+    breakout_ref = _prior_session_extreme(df, session_start, cross_idx + 1, want_bullish)
+
     e20_now = float(e20.iloc[last_i])
     e50_now = float(e50.iloc[last_i])
     close_now = float(close.iloc[last_i])
     open_now = float(open_.iloc[last_i])
-    breakout_ref_now = _prior_session_extreme(df, session_start, last_i, want_bullish)
 
-    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref_now):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref):
         return False
 
     for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
@@ -143,8 +146,7 @@ def _signal(df, ind, want_bullish):
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
         open_i = float(open_.iloc[i])
-        breakout_ref_i = _prior_session_extreme(df, session_start, i, want_bullish)
-        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref_i):
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref):
             return False
 
     return True
@@ -250,8 +252,7 @@ def _ema_momentum_diagnostics(df, ind):
         else:
             diff_pct = 0.0
         setup = 'Bullish (EMA20>EMA50)' if direction == 'up' else 'Bearish (EMA20<EMA50)' if direction == 'down' else 'No crossover yet'
-        last_i = len(ind) - 1
-        breakout_ref = _prior_session_extreme(df, session_start, last_i, direction == 'up') if direction else None
+        breakout_ref = _prior_session_extreme(df, session_start, cross_idx + 1, direction == 'up') if cross_idx is not None else None
         out = {
             'EMA20': round(e20, 2),
             'EMA50': round(e50, 2),
