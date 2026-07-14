@@ -1,4 +1,4 @@
-# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v7): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES; SELL is the mirror with Open/Close < both EMAs.
+# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v8): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES, AND Close breaks above the highest high made so far in today's session; SELL is the mirror (Open/Close < both EMAs, Close breaks below today's lowest low).
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer
 EMA_DIFF_THRESHOLD_PCT = 0.50  # required |EMA20-EMA50| / EMA50 * 100 before entry
-MAX_SIGNAL_DELAY_MINUTES = 30  # crossover must confirm within this window or it's stale
+MAX_SIGNAL_DELAY_MINUTES = 60  # crossover must confirm within this window or it's stale
 TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_scanner.py
 
 
@@ -43,9 +43,32 @@ def _find_last_crossover(ind, session_start=0):
     return None, None
 
 
-def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross):
-    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs)."""
+def _prior_session_extreme(df, session_start, i, want_bullish):
+    """
+    Highest 'high' (BUY) / lowest 'low' (SELL) among today's candles strictly
+    before index i (i.e. df.iloc[session_start:i] — session_start to i-1
+    inclusive, i itself excluded). Used as the breakout reference level that
+    the *current* candle's close must clear before an entry is allowed.
+    Returns None if there are no prior candles today to measure (i is the
+    first candle of the session) or the high/low columns are missing.
+    """
+    lo = max(session_start, 0)
+    if i <= lo or 'high' not in df.columns or 'low' not in df.columns:
+        return None
+    window = df.iloc[lo:i]
+    if len(window) == 0:
+        return None
+    try:
+        return float(window['high'].max()) if want_bullish else float(window['low'].min())
+    except Exception:
+        return None
+
+
+def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross, breakout_ref):
+    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs) + Step 5 (Close breaks the prior session high/low)."""
     if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or np.isnan(e20_at_cross) or e20_at_cross == 0:
+        return False
+    if breakout_ref is None or np.isnan(breakout_ref):
         return False
     if want_bullish:
         diff_pct = ((e20_val - e20_at_cross) / e20_at_cross) * 100.0
@@ -55,6 +78,7 @@ def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cr
             and close_val > e20_val
             and open_val > e50_val
             and close_val > e50_val
+            and close_val > breakout_ref  # Step 5: close must break above the highest high made so far today
         )
     else:
         diff_pct = ((e20_at_cross - e20_val) / e20_at_cross) * 100.0
@@ -64,6 +88,7 @@ def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cr
             and close_val < e20_val
             and open_val < e50_val
             and close_val < e50_val
+            and close_val < breakout_ref  # Step 5: close must break below the lowest low made so far today
         )
 
 
@@ -108,8 +133,9 @@ def _signal(df, ind, want_bullish):
     e50_now = float(e50.iloc[last_i])
     close_now = float(close.iloc[last_i])
     open_now = float(open_.iloc[last_i])
+    breakout_ref_now = _prior_session_extreme(df, session_start, last_i, want_bullish)
 
-    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref_now):
         return False
 
     for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
@@ -117,14 +143,15 @@ def _signal(df, ind, want_bullish):
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
         open_i = float(open_.iloc[i])
-        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross):
+        breakout_ref_i = _prior_session_extreme(df, session_start, i, want_bullish)
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref_i):
             return False
 
     return True
 
 
 def confluence_buy(df, ind):
-    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50 on the first qualifying candle within the delay window."""
+    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50, AND Close breaks above the highest high made so far in today's session — on the first qualifying candle within the delay window."""
     try:
         signal = _signal(df, ind, want_bullish=True)
         if signal:
@@ -148,7 +175,7 @@ def confluence_buy(df, ind):
 
 
 def confluence_sell(df, ind):
-    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50."""
+    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50, AND Close breaks below the lowest low made so far in today's session."""
     try:
         signal = _signal(df, ind, want_bullish=False)
         if signal:
@@ -223,6 +250,8 @@ def _ema_momentum_diagnostics(df, ind):
         else:
             diff_pct = 0.0
         setup = 'Bullish (EMA20>EMA50)' if direction == 'up' else 'Bearish (EMA20<EMA50)' if direction == 'down' else 'No crossover yet'
+        last_i = len(ind) - 1
+        breakout_ref = _prior_session_extreme(df, session_start, last_i, direction == 'up') if direction else None
         out = {
             'EMA20': round(e20, 2),
             'EMA50': round(e50, 2),
@@ -242,6 +271,9 @@ def _ema_momentum_diagnostics(df, ind):
                 out['SetupAge(min)'] = round(age_minutes, 1)
                 out['MaxAge(min)'] = MAX_SIGNAL_DELAY_MINUTES
                 out['Stale'] = age_minutes > MAX_SIGNAL_DELAY_MINUTES
+        if breakout_ref is not None and not np.isnan(breakout_ref):
+            out['BreakoutRef'] = round(breakout_ref, 2)
+            out['BreakoutCleared'] = (close > breakout_ref) if direction == 'up' else (close < breakout_ref)
         return out
     except Exception as e:
         logger.debug(f"EMA_MOMENTUM diagnostics error: {e}")
