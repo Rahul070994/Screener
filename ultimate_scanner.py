@@ -77,6 +77,14 @@ AVAILABLE_STRATEGY_META = strategies.STRATEGY_META
 # displaying live "what is this strategy actually seeing right now" data
 # in the Signal Log UI; never affects trigger/entry logic.
 AVAILABLE_STRATEGY_DIAGNOSTICS = strategies.STRATEGY_DIAGNOSTICS
+# Optional per-strategy early-exit functions {strategy_name: fn(df, ind, pos) -> bool}
+# — see each strategy module's `strategy_exits` dict (e.g. intraday_strategy.py).
+# A strategy opts in by registering a function here; the scanner has no
+# built-in idea of what "the setup reversed" means for any given strategy
+# (EMA flip, RSI exhaustion, whatever) — that logic lives entirely in the
+# strategy module. getattr fallback keeps this working even for a
+# strategies.py that predates this feature.
+AVAILABLE_STRATEGY_EXITS = getattr(strategies, 'STRATEGY_EXITS', {})
 
 # ── Modules (code-organization refactor — see modules/ folder) ─────
 # modules/scanner.py (FullScanner — old Monitoring tab scan engine) and
@@ -1442,6 +1450,35 @@ class PaperTradingEngine:
             execution_price *= (1.0 - self.SLIPPAGE_PCT)
         return round(execution_price, 2)
     
+    def _check_reversal_exit(self, symbol, pos, df, ind):
+        """
+        Give the strategy that opened this position a chance to say "my
+        setup is invalidated, get out now" — ahead of target/SL. Fully
+        delegated to the strategy module via strategy_exits: the scanner
+        doesn't know or care whether that means an EMA crossing back,
+        an RSI exhaustion signal, or anything else — it just calls
+        whatever function the strategy registered and acts on True/False.
+        Strategies that don't register anything here are skipped entirely.
+        """
+        exit_fn = AVAILABLE_STRATEGY_EXITS.get(pos.get('strategy'))
+        if not exit_fn:
+            return None, None
+        try:
+            should_exit = exit_fn(df, ind, pos)
+        except Exception as e:
+            logger.error(f"Strategy exit check error [{pos.get('strategy')}] {symbol}: {e}")
+            return None, None
+        if not should_exit:
+            return None, None
+
+        side = pos['side']
+        exit_side = 'SELL' if side == 'BUY' else 'BUY'
+        ep = self._get_execution_price(symbol, exit_side, 0)
+        logger.info(
+            f"STRATEGY_EXIT {symbol}: strategy={pos.get('strategy')} side={side} -> {ep:.2f}"
+        )
+        return ep, 'STRATEGY_EXIT'
+
     def _check_stop_loss_target(self, symbol, pos, df, ltp):
         entry = pos['entry_price']
         side = pos['side']
@@ -1659,21 +1696,23 @@ class PaperTradingEngine:
 
         margin_qty = int(usable // margin_per_share)
 
+        # NOTE: ATR-based risk-per-trade sizing used to be able to cap qty
+        # well below the 80%-wallet margin cap (e.g. on low-ATR stocks,
+        # 1% of wallet ÷ small SL distance could be far fewer shares than
+        # the wallet could otherwise afford). Per product decision, sizing
+        # now always uses the full 80%-of-wallet margin cap; ATR still
+        # drives the target/stoploss *price levels* elsewhere, just not qty.
+        qty = margin_qty
         if atr and atr > 0:
             risk_amount = wallet * self.RISK_PER_TRADE_PCT
             sl_distance = atr * self.ATR_SL_MULTIPLIER
             if sl_distance > 0:
                 risk_qty = int(risk_amount / sl_distance)
-                qty = max(1, min(margin_qty, risk_qty))
                 logger.info(
-                    f"Risk sizing [{symbol}]: ₹{wallet:.0f}×{self.RISK_PER_TRADE_PCT*100:.0f}%"
-                    f"=₹{risk_amount:.0f} ÷ SL({sl_distance:.2f}) → risk_qty={risk_qty}"
-                    f" | margin_cap={margin_qty} | final={qty}"
+                    f"Sizing [{symbol}]: margin_cap={margin_qty} (80% wallet) "
+                    f"| risk_qty would have been {risk_qty} (ATR-based, no longer applied) "
+                    f"| final={qty}"
                 )
-            else:
-                qty = margin_qty
-        else:
-            qty = margin_qty
 
         if qty < 1:
             return 0, 0.0, margin_pct, source
@@ -2536,10 +2575,12 @@ class PaperTradingEngine:
                     if hold_locked:
                         exit_price, reason = None, None
                     else:
-                        self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
-                        exit_price, reason = self._check_stop_loss_target(
-                            symbol, pos, df, fresh_ltp
-                        )
+                        exit_price, reason = self._check_reversal_exit(symbol, pos, df, ind)
+                        if not exit_price:
+                            self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
+                            exit_price, reason = self._check_stop_loss_target(
+                                symbol, pos, df, fresh_ltp
+                            )
 
                     if exit_price:
                         if symbol in self.data["positions"]:
@@ -3448,23 +3489,20 @@ class BacktestEngine:
             margin_per_share = price * margin_pct
             qty = int((wallet * 0.8) / margin_per_share) if margin_per_share > 0 else 0
 
-            # ATR-based risk sizing — mirrors live's
-            # _smart_allocation_time_based(): cap qty by risk-per-trade
-            # (wallet * RISK_PER_TRADE_PCT / (ATR * ATR_SL_MULTIPLIER)) in
-            # addition to the plain margin-affordability cap. Previously
-            # backtest only ever sized by margin affordability, which could
-            # size a position far larger than live ever would on a
-            # high-ATR (volatile) stock.
+            # ATR-based risk sizing no longer caps qty — mirrors live's
+            # _smart_allocation_time_based(), which now always sizes to the
+            # full 80%-of-wallet margin cap. ATR still sets target/stoploss
+            # price levels elsewhere; it just doesn't cut quantity anymore.
             if atr and atr > 0 and qty > 0:
                 risk_amount = wallet * PaperTradingEngine.RISK_PER_TRADE_PCT
                 sl_distance = atr * PaperTradingEngine.ATR_SL_MULTIPLIER
                 if sl_distance > 0:
                     risk_qty = int(risk_amount / sl_distance)
-                    qty = max(1, min(qty, risk_qty))
+                    logger.debug(
+                        f"  {sym} {side} sizing: margin_cap={qty} (80% wallet) "
+                        f"| risk_qty would have been {risk_qty} (ATR-based, no longer applied)"
+                    )
 
-            # Mirrors live's _smart_allocation_time_based() slot-based sizing
-            # cut — backtest was previously always sizing at full 80% wallet
-            # regardless of time of day.
             
             if qty <= 0:
                 logger.debug(f"  {sym} {side} signal but qty=0 (wallet={wallet:.2f}, margin_per_share={margin_per_share:.2f})")

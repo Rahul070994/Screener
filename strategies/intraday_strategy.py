@@ -171,6 +171,34 @@ def confluence_sell(df, ind):
         return False
 
 
+# Early-exit check for the live Signal Log / position monitor — called by
+# the scanner (via strategy_exits, keyed by the strategy name that opened
+# the position) once per pass on an OPEN position, ahead of target/SL.
+# Returning True closes the trade immediately at market, regardless of
+# where price sits relative to target/SL. All strategy-specific knowledge
+# of what counts as "reversed" (EMA20/50 flip, in this strategy's case)
+# stays here — the scanner just calls whatever function this strategy
+# registers and acts on True/False, so it never needs to know EMA20/EMA50
+# even exist.
+def _ema_momentum_reversal_exit(df, ind, pos):
+    try:
+        if 'ema_20' not in ind.columns or 'ema_50' not in ind.columns or len(ind) < 1:
+            return False
+        e20 = float(ind['ema_20'].iloc[-1])
+        e50 = float(ind['ema_50'].iloc[-1])
+        if np.isnan(e20) or np.isnan(e50):
+            return False
+        side = pos.get('side')
+        if side == 'BUY':
+            return e20 < e50   # was above EMA50 at entry, now crossed back below
+        if side == 'SELL':
+            return e20 > e50   # was below EMA50 at entry, now crossed back above
+        return False
+    except Exception as e:
+        logger.debug(f"EMA_MOMENTUM reversal-exit check error: {e}")
+        return False
+
+
 # Optional diagnostics for the live Signal Log UI — shows the strategy's own decision variables per bar, doesn't affect entry logic.
 def _ema_momentum_diagnostics(df, ind):
     try:
@@ -223,6 +251,15 @@ def _ema_momentum_diagnostics(df, ind):
 strategy_diagnostics = {
     'EMA_MOMENTUM_BUY': _ema_momentum_diagnostics,
     'EMA_MOMENTUM_SELL': _ema_momentum_diagnostics,
+}
+
+# Optional per-strategy early-exit functions {strategy_name: fn(df, ind, pos) -> bool}.
+# A strategy only needs an entry here if it wants to close a position early
+# (ahead of target/SL) when its own setup invalidates. Strategies that don't
+# define one simply aren't in this dict, and the scanner skips the check.
+strategy_exits = {
+    'EMA_MOMENTUM_BUY': _ema_momentum_reversal_exit,
+    'EMA_MOMENTUM_SELL': _ema_momentum_reversal_exit,
 }
 
 all_strategies = {
