@@ -1060,6 +1060,10 @@ class PaperTradingEngine:
     MARKET_CLOSE = 930
     NO_NEW_TRADES_AFTER = 870
     SQUARE_OFF_TIME = 915
+    # Minutes after MARKET_OPEN before new (non-open-position) entries are
+    # first evaluated — was 15 (9:15-9:30 blacked out), now 3 so live/backtest
+    # entries can start from 9:18 instead of 9:30.
+    NEW_ENTRY_WARMUP_MINUTES = 3
     MIN_SIGNAL_SCORE = 35.0
     MIN_VOTE_PCT = 50.0
     MIN_VOL_SURGE = 1.3
@@ -1945,8 +1949,8 @@ class PaperTradingEngine:
         # The 9:15-14:00 trade slot and 14:30 cutoff exist only to guarantee
         # enough runway to square off an INTRADAY (MIS) position by 15:15.
         # CNC/Delivery has no forced square-off, so it may enter any time
-        # during market hours (already gated to 9:30-15:30 by the caller in
-        # _check_signal via MARKET_OPEN+15 / MARKET_CLOSE).
+        # during market hours (already gated to 9:18-15:30 by the caller in
+        # _check_signal via MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES / MARKET_CLOSE).
         if self.trading_mode == 'INTRADAY':
             if mins >= self.NO_NEW_TRADES_AFTER:
                 _block(f"After cutoff {now.strftime('%H:%M')} >= 14:30")
@@ -2245,7 +2249,7 @@ class PaperTradingEngine:
                 _has_open_pos = symbol in self.data.get("positions", {})
 
             if not _has_open_pos:
-                if self.MARKET_OPEN <= mins < self.MARKET_OPEN + 15:
+                if self.MARKET_OPEN <= mins < self.MARKET_OPEN + self.NEW_ENTRY_WARMUP_MINUTES:
                     return
                 if mins >= self.MARKET_CLOSE:
                     return
@@ -3327,16 +3331,16 @@ class BacktestEngine:
                 continue
 
             # Mirrors live's _check_signal(), which — regardless of trading
-            # mode — refuses to evaluate a *new* entry in the first 15
-            # minutes of the session (9:15-9:30, so indicators/opening
+            # mode — refuses to evaluate a *new* entry in the first few
+            # minutes of the session (9:15-9:18, so indicators/opening
             # range have bars to form) or once the market has closed:
-            #   if MARKET_OPEN <= mins < MARKET_OPEN+15: return
+            #   if MARKET_OPEN <= mins < MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES: return
             #   if mins >= MARKET_CLOSE: return
             # Previously this whole window check was nested inside
             # `self.trading_mode == 'INTRADAY'`, so a Delivery/CNC backtest
             # could open a position at 9:16 AM or 3:29 PM — something live
             # would always refuse no matter the mode.
-            if bar_mins < PaperTradingEngine.MARKET_OPEN + 15 or bar_mins >= PaperTradingEngine.MARKET_CLOSE:
+            if bar_mins < PaperTradingEngine.MARKET_OPEN + PaperTradingEngine.NEW_ENTRY_WARMUP_MINUTES or bar_mins >= PaperTradingEngine.MARKET_CLOSE:
                 continue
             # NO_NEW_TRADES_AFTER (14:30 cutoff) and the 9:15-14:00 trade
             # slot exist only to guarantee runway to square off an INTRADAY
@@ -4457,7 +4461,7 @@ def gen_paper_tab(pe):
     # square-off). CNC/Delivery has no forced exit, so the banner must not
     # claim either applies to it.
     if pe.trading_mode == 'DELIVERY':
-        mode_window_txt = 'No forced square-off · Entries allowed 9:30–15:30'
+        mode_window_txt = 'No forced square-off · Entries allowed 9:18–15:30'
     else:
         mode_window_txt = 'SqOff 15:15 · Trading Window: 9:15–14:30 ⭐⭐⭐⭐⭐'
     banner = (
