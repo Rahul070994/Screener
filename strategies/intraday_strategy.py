@@ -43,12 +43,12 @@ def _find_last_crossover(ind, session_start=0):
     return None, None
 
 
-def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish):
-    """Step 3 (EMA diff >= threshold) + Step 4 (Open AND Close beyond both EMAs) for one candle."""
-    if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or e50_val == 0:
+def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross):
+    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs)."""
+    if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or np.isnan(e20_at_cross) or e20_at_cross == 0:
         return False
     if want_bullish:
-        diff_pct = ((e20_val - e50_val) / e50_val) * 100.0
+        diff_pct = ((e20_val - e20_at_cross) / e20_at_cross) * 100.0
         return (
             diff_pct >= EMA_DIFF_THRESHOLD_PCT
             and open_val > e20_val
@@ -57,7 +57,7 @@ def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish):
             and close_val > e50_val
         )
     else:
-        diff_pct = ((e50_val - e20_val) / e50_val) * 100.0
+        diff_pct = ((e20_at_cross - e20_val) / e20_at_cross) * 100.0
         return (
             diff_pct >= EMA_DIFF_THRESHOLD_PCT
             and open_val < e20_val
@@ -98,6 +98,7 @@ def _signal(df, ind, want_bullish):
     close = df['close']
     open_ = df['open']
     last_i = len(ind) - 1
+    e20_at_cross = float(e20.iloc[cross_idx])  # fixed reference point: EMA20's value at the crossover bar
 
     age_minutes = _minutes_between(df, cross_idx, last_i)  # staleness guard
     if age_minutes is not None and age_minutes > MAX_SIGNAL_DELAY_MINUTES:
@@ -108,7 +109,7 @@ def _signal(df, ind, want_bullish):
     close_now = float(close.iloc[last_i])
     open_now = float(open_.iloc[last_i])
 
-    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross):
         return False
 
     for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
@@ -116,14 +117,14 @@ def _signal(df, ind, want_bullish):
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
         open_i = float(open_.iloc[i])
-        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish):
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross):
             return False
 
     return True
 
 
 def confluence_buy(df, ind):
-    """BUY: EMA20 crosses above EMA50, then Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50 on the first qualifying candle within the delay window."""
+    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50 on the first qualifying candle within the delay window."""
     try:
         signal = _signal(df, ind, want_bullish=True)
         if signal:
@@ -132,10 +133,13 @@ def confluence_buy(df, ind):
             e50 = float(ind['ema_50'].iloc[-1])
             close_now = float(df['close'].iloc[-1])
             open_now = float(df['open'].iloc[-1])
-            diff_pct = ((e20 - e50) / e50) * 100.0
+            session_start = _session_start_idx(df)
+            _, cross_idx = _find_last_crossover(ind, session_start=session_start)
+            e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
+            diff_pct = ((e20 - e20_at_cross) / e20_at_cross) * 100.0
             logger.info(
                 f"EMA_MOMENTUM_BUY: {sym} open={open_now:.2f} close={close_now:.2f} "
-                f"ema20={e20:.2f} ema50={e50:.2f} ema_diff_pct={diff_pct:.2f}"
+                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}"
             )
         return bool(signal)
     except Exception as e:
@@ -144,7 +148,7 @@ def confluence_buy(df, ind):
 
 
 def confluence_sell(df, ind):
-    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50."""
+    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50."""
     try:
         signal = _signal(df, ind, want_bullish=False)
         if signal:
@@ -153,10 +157,13 @@ def confluence_sell(df, ind):
             e50 = float(ind['ema_50'].iloc[-1])
             close_now = float(df['close'].iloc[-1])
             open_now = float(df['open'].iloc[-1])
-            diff_pct = ((e50 - e20) / e50) * 100.0
+            session_start = _session_start_idx(df)
+            _, cross_idx = _find_last_crossover(ind, session_start=session_start)
+            e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
+            diff_pct = ((e20_at_cross - e20) / e20_at_cross) * 100.0
             logger.info(
                 f"EMA_MOMENTUM_SELL: {sym} open={open_now:.2f} close={close_now:.2f} "
-                f"ema20={e20:.2f} ema50={e50:.2f} ema_diff_pct={diff_pct:.2f}"
+                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}"
             )
         return bool(signal)
     except Exception as e:
@@ -177,10 +184,14 @@ def _ema_momentum_diagnostics(df, ind):
         open_now = float(df['open'].iloc[-1])
         if np.isnan(e20) or np.isnan(e50) or e50 == 0:
             return {}
-        if direction == 'up':
-            diff_pct = ((e20 - e50) / e50) * 100.0
-        elif direction == 'down':
-            diff_pct = ((e50 - e20) / e50) * 100.0
+        if cross_idx is not None:
+            e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
+        else:
+            e20_at_cross = float('nan')
+        if direction == 'up' and not np.isnan(e20_at_cross) and e20_at_cross != 0:
+            diff_pct = ((e20 - e20_at_cross) / e20_at_cross) * 100.0
+        elif direction == 'down' and not np.isnan(e20_at_cross) and e20_at_cross != 0:
+            diff_pct = ((e20_at_cross - e20) / e20_at_cross) * 100.0
         else:
             diff_pct = 0.0
         setup = 'Bullish (EMA20>EMA50)' if direction == 'up' else 'Bearish (EMA20<EMA50)' if direction == 'down' else 'No crossover yet'
