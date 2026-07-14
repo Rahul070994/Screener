@@ -1338,6 +1338,37 @@ class PaperTradingEngine:
         with self._lock:
             self.data['wallet'] = round(float(amount), 2)
             self._save()
+
+    def reset_all(self):
+        """
+        Full reset for the Reset button: wipes Positions, Orders, Trades
+        and puts the wallet back to the default ₹10,000. daily_stats and
+        circuit_breaker are cleared too since they're derived from
+        trades/wallet — leaving them stale after a reset would show numbers
+        that no longer correspond to anything in the Trades tab.
+
+        Blocked while any position is still open — a position holds margin
+        carved out of the current wallet, so wiping the wallet out from
+        under it would leave that number meaningless. Caller must square
+        off open positions first (the UI does this via forceExit/Exit All).
+        """
+        with self._lock:
+            if self.data['positions']:
+                return False, "Close all open positions before resetting."
+            self.data['wallet'] = 10000.0
+            self.data['orders'] = []
+            self.data['trades'] = []
+            self.data['daily_pnl'] = {}
+            self.data['daily_stats'] = {
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'pnl': 0.0, 'trades': 0, 'wins': 0, 'losses': 0
+            }
+            self.data['circuit_breaker'] = {'triggered': False, 'time': None, 'reason': None}
+            self.consecutive_losses = 0
+            self.last_trade_pnl = None
+            self._save(force_backup=True)
+            logger.info("Paper trading reset: wallet=10000, positions/orders/trades cleared")
+            return True, "Reset complete"
     
     def _check_circuit_breakers(self):
         with self._lock:
@@ -4288,6 +4319,19 @@ def paper_wallet():
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
+@app.route('/paper/reset', methods=['POST'])
+def paper_reset():
+    try:
+        _, _, pe, _ = get_user_engines()
+        if not pe:
+            return jsonify({'status': 'error', 'msg': 'Not logged in'})
+        ok, msg = pe.reset_all()
+        if not ok:
+            return jsonify({'status': 'error', 'msg': msg})
+        return jsonify({'status': 'ok', 'msg': msg, 'wallet': pe.data['wallet']})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
 @app.route('/paper/summary')
 def paper_summary():
     try:
@@ -4491,6 +4535,7 @@ def gen_paper_tab(pe):
         '<div class="wallet-edit" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%">'
         '<input type="number" id="walletInput" value="' + str(int(wallet)) + '" step="10000" min="1000" style="flex:1;min-width:0">'
         '<button class="btn btn-gold" onclick="saveWallet()"><i class="fas fa-coins"></i> Set</button>'
+        '<button class="btn" style="background:var(--red,#ff1744);color:#fff" onclick="resetPaperTrading()"><i class="fas fa-rotate-left"></i> Reset</button>'
         '</div></div>'
     )
     mode_label = 'CNC/Delivery' if pe.trading_mode == 'DELIVERY' else 'Intraday'

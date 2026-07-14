@@ -1218,6 +1218,16 @@ fetch('/paper/wallet',{method:'POST',headers:{'Content-Type':'application/json'}
 .then(r=>r.json()).then(d=>{showToast('₹'+Number(v).toLocaleString('en-IN')+' wallet set ✓');loadPTData();})
 .catch(()=>showToast('Error')).finally(()=>{if(btn){btn.innerHTML=orig;btn.disabled=false;}});
 }
+function resetPaperTrading(){
+if(!confirm('Reset Positions, Orders, Trades and Wallet (back to ₹10,000)? This cannot be undone.'))return;
+var btn=document.querySelector('.wallet-edit .btn:last-child');var orig=btn?btn.innerHTML:'';
+if(btn){btn.innerHTML='<i class="fas fa-spinner fa-spin"></i>';btn.disabled=true;}
+fetch('/paper/reset',{method:'POST'})
+.then(r=>r.json()).then(d=>{
+    if(d.status==='ok'){showToast('✅ Reset complete');loadPTData();renderPTTab(ptTab);}
+    else{showToast('❌ '+(d.msg||'Error'));}
+}).catch(e=>{showToast('❌ '+e.message);}).finally(()=>{if(btn){btn.innerHTML=orig;btn.disabled=false;}});
+}
 
 document.addEventListener('DOMContentLoaded',()=>{initPT();});
 document.addEventListener('visibilitychange',()=>{
