@@ -364,7 +364,7 @@ var line=document.getElementById('bannerModeLine');
 if(line){
     line.innerHTML = '80% wallet · Margin-based sizing · [' + modeLabel + '] Target +' + tgt.toFixed(2)
         + '% · SL -' + sl.toFixed(2) + '% (Settings → Target &amp; Stop Loss) · ' + _modeWindowTxt(mode)
-        + ' · Score≥35 · Vote≥50% · Vol≥1.3×';
+        + ' · Strategy signal = direct entry (no panel gates)';
 }
 var universeB=document.getElementById('bannerUniverseBadge');
 if(universeB) universeB.innerHTML='<i class="fas fa-chart-line"></i> '+(d.universe_count||200)+' NIFTY 200';

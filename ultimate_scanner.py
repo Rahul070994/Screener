@@ -4509,7 +4509,7 @@ def gen_paper_tab(pe):
         '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.8 — Strategy-Agnostic Scoring</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5" id="bannerModeLine">'
         '80% wallet · Margin-based sizing · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · ' + mode_window_txt + ' · '
-        'Score≥35 · Vote≥50% · Vol≥1.3×'
+        'Strategy signal = direct entry (no panel gates)'
         '</div></div>'
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;width:100%">'
         '<span class="b bg-gold" id="bannerUniverseBadge"><i class="fas fa-chart-line"></i> ' + str(len(NIFTY200_SYMBOLS)) + ' NIFTY 200</span>'
