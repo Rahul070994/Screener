@@ -1,4 +1,4 @@
-# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v8): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES, AND Close breaks above the highest high made so far in today's session; SELL is the mirror (Open/Close < both EMAs, Close breaks below today's lowest low).
+# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v9): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES, AND Close breaks above the highest high made so far in today's session, AND Close clears the Camarilla R3 (breakout) level from the previous session with a minimum buffer AND minimum room before R4; SELL is the mirror (Open/Close < both EMAs, Close breaks below today's lowest low, Close clears S3 with buffer + room before S4).
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,15 @@ MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer
 EMA_DIFF_THRESHOLD_PCT = 0.50  # required |EMA20-EMA50| / EMA50 * 100 before entry
 MAX_SIGNAL_DELAY_MINUTES = 60  # crossover must confirm within this window or it's stale
 TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_scanner.py
+
+# --- Camarilla pivot confirmation (Step 6) ---
+# R3/S3 are Camarilla's breakout-trigger levels; R4/S4 are the extended
+# exhaustion/target levels. A close that has *just* poked past R3/S3 is
+# a weak, easily-reversed breakout (price could snap back any moment) —
+# so we require a minimum buffer beyond R3/S3, AND minimum room before
+# hitting R4/S4 (so the trade isn't entering right under a ceiling).
+CAMARILLA_MIN_BUFFER_PCT = 0.15  # close must clear R3/S3 by at least this % to count as a real break, not a poke
+CAMARILLA_MIN_ROOM_PCT = 0.30    # close must still be at least this % away from R4/S4 (exhaustion zone)
 
 
 def _session_start_idx(df):
@@ -64,11 +73,101 @@ def _prior_session_extreme(df, session_start, i, want_bullish):
         return None
 
 
-def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross, breakout_ref):
-    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs) + Step 5 (Close breaks the prior session high/low)."""
+def _previous_session_ohlc(df, session_start):
+    """
+    High/Low/Close of the trading day immediately before today (today =
+    the day session_start belongs to). df already spans several calendar
+    days (the scanner fetches a multi-day lookback window for EMA50
+    warm-up), so the previous session's candles are simply the rows
+    right before session_start, filtered down to that single date.
+    Returns None if there's no prior day in the window.
+    """
+    if 'date' not in df.columns or session_start <= 0:
+        return None
+    try:
+        dates = pd.to_datetime(df['date'])
+        prev_day_date = dates.iloc[session_start - 1].date()
+        mask = dates.dt.date.values == prev_day_date
+        prev_df = df.loc[mask]
+        if len(prev_df) == 0 or 'high' not in prev_df.columns or 'low' not in prev_df.columns:
+            return None
+        return {
+            'high': float(prev_df['high'].max()),
+            'low': float(prev_df['low'].min()),
+            'close': float(prev_df['close'].iloc[-1]),
+        }
+    except Exception:
+        return None
+
+
+def _camarilla_levels(prev_ohlc):
+    """Classic Camarilla R1-R4/S1-S4 from the previous session's H/L/C. Only R3/R4 (S3/S4) are used as entry gates; R1/R2/S1/S2 sit inside the day's 'noise zone' and aren't meaningful breakout levels on their own."""
+    if prev_ohlc is None:
+        return None
+    prev_high, prev_low, prev_close = prev_ohlc['high'], prev_ohlc['low'], prev_ohlc['close']
+    rng = prev_high - prev_low
+    if rng <= 0 or np.isnan(rng):
+        return None
+    return {
+        'R4': prev_close + rng * 1.1 / 2,
+        'R3': prev_close + rng * 1.1 / 4,
+        'R2': prev_close + rng * 1.1 / 6,
+        'R1': prev_close + rng * 1.1 / 12,
+        'S1': prev_close - rng * 1.1 / 12,
+        'S2': prev_close - rng * 1.1 / 6,
+        'S3': prev_close - rng * 1.1 / 4,
+        'S4': prev_close - rng * 1.1 / 2,
+    }
+
+
+def _camarilla_confirmed(close_val, levels, want_bullish):
+    """
+    Step 6: Close must clear the Camarilla breakout level (R3 for BUY,
+    S3 for SELL) by at least CAMARILLA_MIN_BUFFER_PCT — a bare poke past
+    the level isn't trusted, since a small pullback could immediately
+    put price back on the wrong side. Close must ALSO still be at least
+    CAMARILLA_MIN_ROOM_PCT away from the next exhaustion level (R4/S4),
+    so we're not buying right under a ceiling / selling right above a floor.
+    """
+    if levels is None or np.isnan(close_val):
+        return False
+    if want_bullish:
+        r3, r4 = levels['R3'], levels['R4']
+        if r3 <= 0 or np.isnan(r3) or np.isnan(r4):
+            return False
+        if close_val <= r3:
+            return False
+        buffer_pct = (close_val - r3) / r3 * 100.0
+        if buffer_pct < CAMARILLA_MIN_BUFFER_PCT:
+            return False
+        if r4 > r3:
+            room_pct = (r4 - close_val) / close_val * 100.0
+            if room_pct < CAMARILLA_MIN_ROOM_PCT:
+                return False
+        return True
+    else:
+        s3, s4 = levels['S3'], levels['S4']
+        if s3 <= 0 or np.isnan(s3) or np.isnan(s4):
+            return False
+        if close_val >= s3:
+            return False
+        buffer_pct = (s3 - close_val) / s3 * 100.0
+        if buffer_pct < CAMARILLA_MIN_BUFFER_PCT:
+            return False
+        if s4 < s3:
+            room_pct = (close_val - s4) / close_val * 100.0
+            if room_pct < CAMARILLA_MIN_ROOM_PCT:
+                return False
+        return True
+
+
+def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross, breakout_ref, camarilla_levels):
+    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs) + Step 5 (Close breaks the prior session high/low) + Step 6 (Close clears Camarilla R3/S3 with buffer + room before R4/S4)."""
     if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or np.isnan(e20_at_cross) or e20_at_cross == 0:
         return False
     if breakout_ref is None or np.isnan(breakout_ref):
+        return False
+    if not _camarilla_confirmed(close_val, camarilla_levels, want_bullish):
         return False
     if want_bullish:
         diff_pct = ((e20_val - e20_at_cross) / e20_at_cross) * 100.0
@@ -133,12 +232,16 @@ def _signal(df, ind, want_bullish):
     # never updated again for this setup.
     breakout_ref = _prior_session_extreme(df, session_start, cross_idx + 1, want_bullish)
 
+    # Camarilla levels come from the previous session's H/L/C, so they're
+    # fixed for the whole of today — computed once per _signal call.
+    camarilla_levels = _camarilla_levels(_previous_session_ohlc(df, session_start))
+
     e20_now = float(e20.iloc[last_i])
     e50_now = float(e50.iloc[last_i])
     close_now = float(close.iloc[last_i])
     open_now = float(open_.iloc[last_i])
 
-    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref, camarilla_levels):
         return False
 
     for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
@@ -146,14 +249,14 @@ def _signal(df, ind, want_bullish):
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
         open_i = float(open_.iloc[i])
-        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref):
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref, camarilla_levels):
             return False
 
     return True
 
 
 def confluence_buy(df, ind):
-    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50, AND Close breaks above the highest high made so far in today's session — on the first qualifying candle within the delay window."""
+    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50, Close breaks above the highest high made so far in today's session, AND Close clears the previous session's Camarilla R3 by >= CAMARILLA_MIN_BUFFER_PCT while staying >= CAMARILLA_MIN_ROOM_PCT away from R4 — on the first qualifying candle within the delay window."""
     try:
         signal = _signal(df, ind, want_bullish=True)
         if signal:
@@ -177,7 +280,7 @@ def confluence_buy(df, ind):
 
 
 def confluence_sell(df, ind):
-    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50, AND Close breaks below the lowest low made so far in today's session."""
+    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50, Close breaks below the lowest low made so far in today's session, AND Close clears the previous session's Camarilla S3 by >= CAMARILLA_MIN_BUFFER_PCT while staying >= CAMARILLA_MIN_ROOM_PCT away from S4."""
     try:
         signal = _signal(df, ind, want_bullish=False)
         if signal:
@@ -275,6 +378,23 @@ def _ema_momentum_diagnostics(df, ind):
         if breakout_ref is not None and not np.isnan(breakout_ref):
             out['BreakoutRef'] = round(breakout_ref, 2)
             out['BreakoutCleared'] = (close > breakout_ref) if direction == 'up' else (close < breakout_ref)
+
+        camarilla_levels = _camarilla_levels(_previous_session_ohlc(df, session_start))
+        if camarilla_levels is not None:
+            want_bullish = (direction == 'up')
+            trigger_key = 'R3' if want_bullish else 'S3'
+            exhaustion_key = 'R4' if want_bullish else 'S4'
+            trigger_val = camarilla_levels[trigger_key]
+            exhaustion_val = camarilla_levels[exhaustion_key]
+            out['Camarilla_' + trigger_key] = round(trigger_val, 2)
+            out['Camarilla_' + exhaustion_key] = round(exhaustion_val, 2)
+            if trigger_val:
+                buffer_pct = ((close - trigger_val) / trigger_val * 100.0) if want_bullish else ((trigger_val - close) / trigger_val * 100.0)
+                out['CamarillaBuffer%'] = round(buffer_pct, 2)
+            if close:
+                room_pct = ((exhaustion_val - close) / close * 100.0) if want_bullish else ((close - exhaustion_val) / close * 100.0)
+                out['CamarillaRoom%'] = round(room_pct, 2)
+            out['CamarillaConfirmed'] = _camarilla_confirmed(close, camarilla_levels, want_bullish)
         return out
     except Exception as e:
         logger.debug(f"EMA_MOMENTUM diagnostics error: {e}")
