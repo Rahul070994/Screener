@@ -82,9 +82,33 @@ AVAILABLE_STRATEGY_DIAGNOSTICS = strategies.STRATEGY_DIAGNOSTICS
 # A strategy opts in by registering a function here; the scanner has no
 # built-in idea of what "the setup reversed" means for any given strategy
 # (EMA flip, RSI exhaustion, whatever) — that logic lives entirely in the
-# strategy module. getattr fallback keeps this working even for a
-# strategies.py that predates this feature.
-AVAILABLE_STRATEGY_EXITS = getattr(strategies, 'STRATEGY_EXITS', {})
+# strategy module. Unlike the other AVAILABLE_STRATEGY_* lookups above,
+# this one used to silently default to {} via getattr(strategies,
+# 'STRATEGY_EXITS', {}) if strategies.py didn't define it — which is
+# exactly what was happening, and silently disabled every strategy's
+# reversal-exit. Now it's loud instead of silent (see warning below).
+if hasattr(strategies, 'STRATEGY_EXITS'):
+    AVAILABLE_STRATEGY_EXITS = strategies.STRATEGY_EXITS
+else:
+    # strategies.py hasn't been updated to aggregate STRATEGY_EXITS from
+    # each strategy module's own `strategy_exits` dict (unlike
+    # STRATEGY_REGISTRY/STRATEGY_META/STRATEGY_DIAGNOSTICS, which ARE
+    # aggregated). Silently defaulting to {} here means every strategy's
+    # reversal-exit (e.g. intraday_strategy.py's EMA20/50 flip exit) is
+    # dead code -- positions only ever close on target/SL/EOD squareoff,
+    # which can hold a reversed position for hours before exiting.
+    # Surface this loudly instead of swallowing it.
+    AVAILABLE_STRATEGY_EXITS = {}
+    warnings.warn(
+        "strategies.py has no STRATEGY_EXITS attribute -- no strategy "
+        "reversal-exit will ever fire. Add, in strategies.py, the same "
+        "kind of aggregation used for STRATEGY_META/STRATEGY_REGISTRY, "
+        "e.g.: STRATEGY_EXITS = {} ; for _m in <loaded strategy modules>: "
+        "STRATEGY_EXITS.update(getattr(_m, 'strategy_exits', {}))",
+        RuntimeWarning,
+    )
+    print("WARNING: STRATEGY_EXITS missing from strategies.py -- reversal-exits are disabled for ALL strategies.")
+
 
 # ── Modules (code-organization refactor — see modules/ folder) ─────
 # modules/scanner.py (FullScanner — old Monitoring tab scan engine) and
@@ -1141,6 +1165,18 @@ class PaperTradingEngine:
     MAX_DAILY_PROFIT_PCT = 0.02
     MAX_CONSECUTIVE_LOSSES = 3
     COOLDOWN_MINUTES = 5
+    # STRATEGY_EXIT (a strategy's own reversal-exit, e.g. EMA20/50 flipping
+    # back) is NOT a failed-setup exit — it means a brand new opposite
+    # crossover already happened. Re-entry needs its own fresh crossover +
+    # confirmation sequence (several bars), which is a natural cooldown on
+    # its own. Applying the full COOLDOWN_MINUTES on top of that used to
+    # cause a real bug: the strategy's _signal() only ever fires on the
+    # FIRST eligible bar after a crossover and never repeats for that same
+    # crossover. If that first eligible bar landed inside the cooldown
+    # window, the trade was skipped AND the strategy silently burned its
+    # one shot at that crossover — the next genuine re-cross was then
+    # ignored for the rest of its life even though no trade was ever taken.
+    REVERSAL_EXIT_COOLDOWN_MINUTES = 0
     CIRCUIT_BREAKER_THRESHOLD = 0.10
     MARKET_OPEN = 555
     MARKET_CLOSE = 930
@@ -1228,6 +1264,7 @@ class PaperTradingEngine:
         self._last_heartbeat = datetime.now()
         self.active_stock_orders = {}
         self.last_exit_time = {}
+        self.last_exit_reason = {}
         self.consecutive_losses = 0
         self.last_trade_pnl = None
         self.strategy_performance = self.data.get('strategy_performance', {})
@@ -2249,6 +2286,7 @@ class PaperTradingEngine:
         del self.data['positions'][symbol]
         self.active_stock_orders.pop(symbol, None)
         self.last_exit_time[symbol] = datetime.now()
+        self.last_exit_reason[symbol] = reason
         logger.info(f"CLOSED {symbol} | Gross {gross_pnl:.2f} | Net {net_pnl:.2f}")
         self._save(force_backup=True)
         return trade
@@ -2726,11 +2764,15 @@ class PaperTradingEngine:
                         return
 
                 if symbol in self.last_exit_time:
+                    was_reversal = self.last_exit_reason.get(symbol) == 'STRATEGY_EXIT'
+                    cooldown_window = (
+                        self.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal else self.COOLDOWN_MINUTES
+                    )
                     ts = (now - self.last_exit_time[symbol]).total_seconds() / 60
-                    if ts < self.COOLDOWN_MINUTES:
+                    if ts < cooldown_window:
                         log_entry["status"] = "COOLDOWN"
                         log_entry["reason"] = (
-                            f"Cooldown {ts:.1f}m / {self.COOLDOWN_MINUTES}m remaining"
+                            f"Cooldown {ts:.1f}m / {cooldown_window}m remaining"
                         )
                         self._add_signal_log(log_entry)
                         return
@@ -3314,6 +3356,7 @@ class BacktestEngine:
         wallet = initial_wallet
         positions = {}
         last_exit_time = {}
+        last_exit_reason = {}
         max_open_pos = PaperTradingEngine.MAX_OPEN_POS
 
         def _release(pos_sym, position, exit_price, reason, close_time):
@@ -3329,6 +3372,7 @@ class BacktestEngine:
                 )
             except Exception:
                 last_exit_time[pos_sym] = datetime.now()
+            last_exit_reason[pos_sym] = reason
             return t
 
         total_syms = len(stock_universe)
@@ -3549,8 +3593,13 @@ class BacktestEngine:
             # — backtest was previously able to re-enter a symbol on the very
             # next bar after closing it, which live never allows.
             if sym in last_exit_time:
+                was_reversal = last_exit_reason.get(sym) == 'STRATEGY_EXIT'
+                cooldown_window = (
+                    PaperTradingEngine.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal
+                    else PaperTradingEngine.COOLDOWN_MINUTES
+                )
                 cooldown_elapsed = (bar_dt - last_exit_time[sym]).total_seconds() / 60
-                if cooldown_elapsed < PaperTradingEngine.COOLDOWN_MINUTES:
+                if cooldown_elapsed < cooldown_window:
                     continue
 
             df_w = df_slice.iloc[-min_bars_needed:].reset_index(drop=True)
