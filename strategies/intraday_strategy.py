@@ -1,4 +1,8 @@
-# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v8): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES, AND Close breaks above the highest high made so far in today's session; SELL is the mirror (Open/Close < both EMAs, Close breaks below today's lowest low).
+# confluence_strategy.py — EMA20/EMA50 Momentum Confirmation (v9): BUY on EMA20 crossing above EMA50 then Open/Close > EMA20 & EMA50 within MAX_SIGNAL_DELAY_MINUTES, AND Close breaks above the highest high made so far in today's session; SELL is the mirror (Open/Close < both EMAs, Close breaks below today's lowest low).
+# v9 adds Step 6 — a classic 5-point pivot (R2/R1/D/S1/S2, from the PREVIOUS session's H/L/C) as the
+# final gate: locate the pivot band the crossover-bar's close fell inside (e.g. between D and S1), then
+# require the CURRENT bar's price (close, in both live and backtest since the strategy only ever sees
+# candles) to sit in the middle 30%-70% zone of that same band before allowing entry.
 
 import numpy as np
 import pandas as pd
@@ -10,6 +14,10 @@ MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer
 EMA_DIFF_THRESHOLD_PCT = 0.05  # required |EMA20-EMA50| / EMA50 * 100 before entry
 MAX_SIGNAL_DELAY_MINUTES = 60  # crossover must confirm within this window or it's stale
 TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_scanner.py
+
+# --- Step 6: Pivot band mid-zone gate -------------------------------------------------
+PIVOT_ZONE_LOW_PCT = 0.30    # lower bound of the "middle" zone within a pivot band (30%)
+PIVOT_ZONE_HIGH_PCT = 0.70   # upper bound of the "middle" zone within a pivot band (70%)
 
 
 def _session_start_idx(df):
@@ -64,15 +72,16 @@ def _prior_session_extreme(df, session_start, i, want_bullish):
         return None
 
 
-def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross, breakout_ref):
-    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs) + Step 5 (Close breaks the prior session high/low)."""
+def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cross, breakout_ref,
+                   pivot_levels=None, pivot_cross_ref=None):
+    """Step 3 (EMA20 has moved >= threshold% from its value AT the crossover bar) + Step 4 (Open AND Close beyond both EMAs) + Step 5 (Close breaks the prior session high/low) + Step 6 (pivot mid-zone gate)."""
     if np.isnan(e20_val) or np.isnan(e50_val) or np.isnan(open_val) or np.isnan(e20_at_cross) or e20_at_cross == 0:
         return False
     if breakout_ref is None or np.isnan(breakout_ref):
         return False
     if want_bullish:
         diff_pct = ((e20_val - e20_at_cross) / e20_at_cross) * 100.0
-        return (
+        base_ok = (
             diff_pct >= EMA_DIFF_THRESHOLD_PCT
             and open_val > e20_val
             and close_val > e20_val
@@ -82,7 +91,7 @@ def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cr
         )
     else:
         diff_pct = ((e20_at_cross - e20_val) / e20_at_cross) * 100.0
-        return (
+        base_ok = (
             diff_pct >= EMA_DIFF_THRESHOLD_PCT
             and open_val < e20_val
             and close_val < e20_val
@@ -90,6 +99,100 @@ def _eligible_bar(e20_val, e50_val, close_val, open_val, want_bullish, e20_at_cr
             and close_val < e50_val
             and close_val < breakout_ref  # Step 5: close must break below the lowest low made so far today
         )
+    if not base_ok:
+        return False
+
+    # Step 6: pivot band mid-zone validation — last condition, gates on top of everything above.
+    pivot_ok, _ = _pivot_midzone_gate(close_val, pivot_cross_ref, pivot_levels)
+    return pivot_ok
+
+
+def _previous_session_ohlc(df, session_start):
+    """
+    High/Low/Close of the trading session immediately before today's (the one
+    ending right before `session_start`). Used as the classic-pivot inputs
+    (PDH/PDL/PDC). Returns None if there's no earlier session in the window
+    (e.g. this is the first day of data) or dates can't be parsed.
+    """
+    if session_start <= 0 or 'date' not in df.columns:
+        return None
+    if 'high' not in df.columns or 'low' not in df.columns or 'close' not in df.columns:
+        return None
+    try:
+        dates = pd.to_datetime(df['date'])
+        prev_date = dates.iloc[session_start - 1].date()
+        same_prev_day = dates.dt.date.values == prev_date
+        idxs = np.flatnonzero(same_prev_day)
+        if len(idxs) == 0:
+            return None
+        prev_window = df.iloc[idxs[0]: idxs[-1] + 1]
+        pdh = float(prev_window['high'].max())
+        pdl = float(prev_window['low'].min())
+        pdc = float(prev_window['close'].iloc[-1])
+        if np.isnan(pdh) or np.isnan(pdl) or np.isnan(pdc):
+            return None
+        return pdh, pdl, pdc
+    except Exception:
+        return None
+
+
+def _classic_pivot_levels(pdh, pdl, pdc):
+    """Standard 5-point pivot set: R2, R1, D (pivot/middle), S1, S2."""
+    pivot = (pdh + pdl + pdc) / 3.0
+    r1 = 2 * pivot - pdl
+    s1 = 2 * pivot - pdh
+    r2 = pivot + (pdh - pdl)
+    s2 = pivot - (pdh - pdl)
+    return {'R2': r2, 'R1': r1, 'D': pivot, 'S1': s1, 'S2': s2}
+
+
+def _find_pivot_band(ref_price, levels):
+    """
+    Locate the pair of ADJACENT pivot lines that bracket ref_price (the price
+    at which the EMA crossover happened), e.g. ref_price between D and S1.
+    Returns (upper_name, upper_val, lower_name, lower_val), or None if
+    ref_price is outside the full R2..S2 range (no band contains it).
+    """
+    ordered = sorted(
+        [('R2', levels['R2']), ('R1', levels['R1']), ('D', levels['D']),
+         ('S1', levels['S1']), ('S2', levels['S2'])],
+        key=lambda kv: kv[1], reverse=True,
+    )
+    for i in range(len(ordered) - 1):
+        upper_name, upper_val = ordered[i]
+        lower_name, lower_val = ordered[i + 1]
+        if lower_val <= ref_price <= upper_val:
+            return upper_name, upper_val, lower_name, lower_val
+    return None
+
+
+def _pivot_midzone_gate(current_price, cross_ref_price, levels):
+    """
+    Step 6: find the pivot band the crossover price fell into, then require
+    current_price (current live price / backtest close) to sit within the
+    middle PIVOT_ZONE_LOW_PCT-PIVOT_ZONE_HIGH_PCT (30%-70%) slice of that same
+    band. Fails closed: if no band contains the crossover price, or the band
+    is degenerate, the gate does not pass (no trade).
+    Returns (passed: bool, info: dict) — info is for diagnostics only.
+    """
+    if levels is None or cross_ref_price is None or np.isnan(cross_ref_price):
+        return False, {}
+    band = _find_pivot_band(cross_ref_price, levels)
+    if band is None:
+        return False, {}
+    upper_name, upper_val, lower_name, lower_val = band
+    span = upper_val - lower_val
+    if span <= 0:
+        return False, {}
+    zone_low = lower_val + PIVOT_ZONE_LOW_PCT * span
+    zone_high = lower_val + PIVOT_ZONE_HIGH_PCT * span
+    passed = zone_low <= current_price <= zone_high
+    info = {
+        'PivotBand': f"{lower_name}-{upper_name}",
+        'PivotZoneLow': round(zone_low, 2),
+        'PivotZoneHigh': round(zone_high, 2),
+    }
+    return passed, info
 
 
 def _minutes_between(df, idx_from, idx_to):
@@ -133,12 +236,20 @@ def _signal(df, ind, want_bullish):
     # never updated again for this setup.
     breakout_ref = _prior_session_extreme(df, session_start, cross_idx + 1, want_bullish)
 
+    # Step 6 setup: pivot levels from the PREVIOUS session's H/L/C, and the
+    # reference price (crossover bar's close) used to pick which pivot band
+    # the setup belongs to. Both are frozen once, same as breakout_ref.
+    prev_ohlc = _previous_session_ohlc(df, session_start)
+    pivot_levels = _classic_pivot_levels(*prev_ohlc) if prev_ohlc is not None else None
+    pivot_cross_ref = float(close.iloc[cross_idx])
+
     e20_now = float(e20.iloc[last_i])
     e50_now = float(e50.iloc[last_i])
     close_now = float(close.iloc[last_i])
     open_now = float(open_.iloc[last_i])
 
-    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref):
+    if not _eligible_bar(e20_now, e50_now, close_now, open_now, want_bullish, e20_at_cross, breakout_ref,
+                          pivot_levels=pivot_levels, pivot_cross_ref=pivot_cross_ref):
         return False
 
     for i in range(cross_idx + 1, last_i):  # don't repeat-fire past the first eligible bar
@@ -146,14 +257,15 @@ def _signal(df, ind, want_bullish):
         e50_i = float(e50.iloc[i])
         close_i = float(close.iloc[i])
         open_i = float(open_.iloc[i])
-        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref):
+        if _eligible_bar(e20_i, e50_i, close_i, open_i, want_bullish, e20_at_cross, breakout_ref,
+                          pivot_levels=pivot_levels, pivot_cross_ref=pivot_cross_ref):
             return False
 
     return True
 
 
 def confluence_buy(df, ind):
-    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50, AND Close breaks above the highest high made so far in today's session — on the first qualifying candle within the delay window."""
+    """BUY: EMA20 crosses above EMA50, then EMA20 moves >= threshold% above its crossover-bar value, with Open>EMA20, Close>EMA20, Open>EMA50, Close>EMA50, Close breaks above the highest high made so far in today's session, AND the current close sits in the middle 30-70% zone of the pivot band (R2/R1/D/S1/S2) the crossover happened in — on the first qualifying candle within the delay window."""
     try:
         signal = _signal(df, ind, want_bullish=True)
         if signal:
@@ -166,9 +278,15 @@ def confluence_buy(df, ind):
             _, cross_idx = _find_last_crossover(ind, session_start=session_start)
             e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
             diff_pct = ((e20 - e20_at_cross) / e20_at_cross) * 100.0
+            prev_ohlc = _previous_session_ohlc(df, session_start)
+            pivot_note = ""
+            if prev_ohlc is not None:
+                levels = _classic_pivot_levels(*prev_ohlc)
+                _, pinfo = _pivot_midzone_gate(close_now, float(df['close'].iloc[cross_idx]), levels)
+                pivot_note = f" pivot_band={pinfo.get('PivotBand', '?')}"
             logger.info(
                 f"EMA_MOMENTUM_BUY: {sym} open={open_now:.2f} close={close_now:.2f} "
-                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}"
+                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}{pivot_note}"
             )
         return bool(signal)
     except Exception as e:
@@ -177,7 +295,7 @@ def confluence_buy(df, ind):
 
 
 def confluence_sell(df, ind):
-    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50, AND Close breaks below the lowest low made so far in today's session."""
+    """SELL: exact mirror of confluence_buy — EMA20 crosses below EMA50, then EMA20 moves >= threshold% below its crossover-bar value, with Open<EMA20, Close<EMA20, Open<EMA50, Close<EMA50, Close breaks below the lowest low made so far in today's session, AND the current close sits in the middle 30-70% zone of the pivot band the crossover happened in."""
     try:
         signal = _signal(df, ind, want_bullish=False)
         if signal:
@@ -190,9 +308,15 @@ def confluence_sell(df, ind):
             _, cross_idx = _find_last_crossover(ind, session_start=session_start)
             e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
             diff_pct = ((e20_at_cross - e20) / e20_at_cross) * 100.0
+            prev_ohlc = _previous_session_ohlc(df, session_start)
+            pivot_note = ""
+            if prev_ohlc is not None:
+                levels = _classic_pivot_levels(*prev_ohlc)
+                _, pinfo = _pivot_midzone_gate(close_now, float(df['close'].iloc[cross_idx]), levels)
+                pivot_note = f" pivot_band={pinfo.get('PivotBand', '?')}"
             logger.info(
                 f"EMA_MOMENTUM_SELL: {sym} open={open_now:.2f} close={close_now:.2f} "
-                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}"
+                f"ema20={e20:.2f} ema50={e50:.2f} ema20_at_cross={e20_at_cross:.2f} ema20_move_pct={diff_pct:.2f}{pivot_note}"
             )
         return bool(signal)
     except Exception as e:
@@ -278,6 +402,24 @@ def _ema_momentum_diagnostics(df, ind):
         if breakout_ref is not None and not np.isnan(breakout_ref):
             out['BreakoutRef'] = round(breakout_ref, 2)
             out['BreakoutCleared'] = (close > breakout_ref) if direction == 'up' else (close < breakout_ref)
+
+        # Step 6 diagnostics: pivot levels + which band the crossover fell in + mid-zone check
+        if cross_idx is not None:
+            prev_ohlc = _previous_session_ohlc(df, session_start)
+            if prev_ohlc is not None:
+                levels = _classic_pivot_levels(*prev_ohlc)
+                pivot_cross_ref = float(df['close'].iloc[cross_idx])
+                pivot_ok, pivot_info = _pivot_midzone_gate(close, pivot_cross_ref, levels)
+                out['R2'] = round(levels['R2'], 2)
+                out['R1'] = round(levels['R1'], 2)
+                out['D'] = round(levels['D'], 2)
+                out['S1'] = round(levels['S1'], 2)
+                out['S2'] = round(levels['S2'], 2)
+                out['PivotOK'] = pivot_ok
+                out.update(pivot_info)
+            else:
+                out['PivotOK'] = False
+                out['PivotNote'] = 'no previous session data available'
         return out
     except Exception as e:
         logger.debug(f"EMA_MOMENTUM diagnostics error: {e}")
