@@ -37,6 +37,18 @@ STRATEGY_META = {}
 # what lets the live Signal Log show "whatever the strategy actually computed"
 # dynamically per-strategy, without ultimate_scanner.py hardcoding any
 # knowledge of individual strategies' internals.
+# Optional per-strategy early-exit functions: {strategy_name: fn(df, ind, pos) -> bool}.
+# A strategy module MAY define a module-level `strategy_exits` dict (same
+# shape/pattern as `strategy_diagnostics` above) mapping its function names
+# to a reversal-exit callable that decides whether an OPEN position should
+# be closed immediately (ahead of target/SL) because its own setup has
+# invalidated. This is entirely optional and additive — a strategy that
+# doesn't define it just contributes nothing here, and the position monitor
+# simply never calls anything for that strategy. This is what lets
+# ultimate_scanner.py's AVAILABLE_STRATEGY_EXITS pick up every strategy's
+# reversal-exit function without ever needing to know that any particular
+# strategy (e.g. EMA20/EMA50 flip) exists.
+STRATEGY_EXITS = {}
 STRATEGY_DIAGNOSTICS = {}
 _STRATEGY_SOURCE_MODULE = {}
 
@@ -83,6 +95,7 @@ def _register_module(name, mod):
         return False
     meta = getattr(mod, 'strategy_meta', {}) or {}
     diagnostics = getattr(mod, 'strategy_diagnostics', {}) or {}
+    exits = getattr(mod, 'strategy_exits', {}) or {}
     STRATEGY_REGISTRY[name] = all_strats
     for strat_name, fn in all_strats.items():
         if strat_name in _STRATEGY_SOURCE_MODULE and _STRATEGY_SOURCE_MODULE[strat_name] != name:
@@ -96,6 +109,12 @@ def _register_module(name, mod):
                 print(f"⚠ Skipping strategy_diagnostics['{strat_name}'] in '{name}': not callable")
             else:
                 STRATEGY_DIAGNOSTICS[strat_name] = diag_fn
+        exit_fn = exits.get(strat_name)
+        if exit_fn is not None:
+            if not callable(exit_fn):
+                print(f"⚠ Skipping strategy_exits['{strat_name}'] in '{name}': not callable")
+            else:
+                STRATEGY_EXITS[strat_name] = exit_fn
     print(f"✓ {name} imported successfully ({len(all_strats)} strategies)")
     return True
 

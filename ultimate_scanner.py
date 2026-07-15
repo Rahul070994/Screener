@@ -3543,20 +3543,39 @@ class BacktestEngine:
 
                 exit_price = None
                 exit_reason = None
-                if pos['side'] == 'BUY':
-                    if bar_low <= pos['stoploss']:
-                        exit_price = self._slip(pos['stoploss'], exit_action)
-                        exit_reason = 'STOP_LOSS'
-                    elif bar_high >= pos['target']:
-                        exit_price = self._slip(pos['target'], exit_action)
-                        exit_reason = 'TARGET'
-                else:
-                    if bar_high >= pos['stoploss']:
-                        exit_price = self._slip(pos['stoploss'], exit_action)
-                        exit_reason = 'STOP_LOSS'
-                    elif bar_low <= pos['target']:
-                        exit_price = self._slip(pos['target'], exit_action)
-                        exit_reason = 'TARGET'
+
+                # Mirrors live's _check_reversal_exit: give the strategy that
+                # opened this position a chance to say "my setup is
+                # invalidated, get out now" ahead of target/SL. Evaluated on
+                # the full df_slice/ind_slice (not the trimmed min_bars_needed
+                # window) — same data shape _check_reversal_exit gets in live
+                # (the full df/ind passed into _check_signal).
+                _exit_fn = AVAILABLE_STRATEGY_EXITS.get(pos.get('strategy'))
+                if _exit_fn:
+                    try:
+                        _should_exit = _exit_fn(df_slice, ind_slice, pos)
+                    except Exception as e:
+                        logger.error(f"Strategy exit check error [{pos.get('strategy')}] {sym}: {e}")
+                        _should_exit = False
+                    if _should_exit:
+                        exit_price = self._slip(ltp, exit_action)
+                        exit_reason = 'STRATEGY_EXIT'
+
+                if exit_price is None:
+                    if pos['side'] == 'BUY':
+                        if bar_low <= pos['stoploss']:
+                            exit_price = self._slip(pos['stoploss'], exit_action)
+                            exit_reason = 'STOP_LOSS'
+                        elif bar_high >= pos['target']:
+                            exit_price = self._slip(pos['target'], exit_action)
+                            exit_reason = 'TARGET'
+                    else:
+                        if bar_high >= pos['stoploss']:
+                            exit_price = self._slip(pos['stoploss'], exit_action)
+                            exit_reason = 'STOP_LOSS'
+                        elif bar_low <= pos['target']:
+                            exit_price = self._slip(pos['target'], exit_action)
+                            exit_reason = 'TARGET'
 
                 if exit_price is not None:
                     _release(sym, pos, exit_price, exit_reason, bar_time)
