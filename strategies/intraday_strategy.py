@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 MIN_BARS_REQUIRED = 100      # EMA50 warm-up buffer
-EMA_DIFF_THRESHOLD_PCT = 0.50  # required |EMA20-EMA50| / EMA50 * 100 before entry
+EMA_DIFF_THRESHOLD_PCT = 0.05  # required |EMA20-EMA50| / EMA50 * 100 before entry
 MAX_SIGNAL_DELAY_MINUTES = 60  # crossover must confirm within this window or it's stale
 TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_scanner.py
 
