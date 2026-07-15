@@ -968,6 +968,84 @@ def _lookback_days(timeframe, min_bars_needed, floor_days=6):
     days_needed = math.ceil(min_bars_needed / bars_per_day) + 2  # +2 buffer days
     return max(floor_days, days_needed)
 
+
+# Kite Connect's historical_data endpoint caps how many calendar days you
+# can request in a single call, and the cap is tighter for finer
+# intervals. A single call outside these limits raises an API error, so
+# any fetch that needs more history than this (e.g. the lookback padding
+# added below for indicator warm-up, or just a wide user-requested
+# backtest range) must be split into multiple calls and stitched back
+# together. Values match Kite Connect's documented historical-data limits.
+KITE_INTERVAL_MAX_DAYS = {
+    'minute': 60,
+    '3minute': 100,
+    '5minute': 100,
+    '10minute': 100,
+    '15minute': 200,
+    '30minute': 200,
+    '60minute': 400,
+    'day': 2000,
+}
+
+
+def _chunk_date_range(start, end, max_days):
+    """Split [start, end] into consecutive sub-ranges each <= max_days,
+    so a single historical_data() call never exceeds Kite's per-interval
+    limit. Returns a list of (chunk_start, chunk_end) tuples covering the
+    whole range with no gaps or overlaps."""
+    chunks = []
+    cur = start
+    step = timedelta(days=max_days)
+    while cur < end:
+        chunk_end = min(cur + step, end)
+        chunks.append((cur, chunk_end))
+        cur = chunk_end
+    return chunks
+
+
+def _fetch_historical_chunked(kite, token, start, end, interval, limiter, tag=""):
+    """
+    Fetch historical_data() across [start, end] for any interval,
+    automatically splitting into Kite-legal chunks (via
+    KITE_INTERVAL_MAX_DAYS) and rate-limiting each individual call
+    through `limiter` (the same shared RateLimiter used everywhere else,
+    so chunking never pushes total call volume past Kite's rate limit
+    either). Returns one de-duplicated, date-sorted list of candles —
+    the same shape a single kite.historical_data() call would return,
+    just assembled from however many requests it actually took.
+
+    A chunk that fails (network hiccup, symbol not listed yet that far
+    back, etc.) is logged and skipped rather than aborting the whole
+    fetch — partial history is far more useful than none for
+    backtest/warm-up purposes.
+    """
+    max_days = KITE_INTERVAL_MAX_DAYS.get(interval, 100)
+    all_rows = []
+    for chunk_start, chunk_end in _chunk_date_range(start, end, max_days):
+        try:
+            limiter.wait(f"{tag} {interval} {chunk_start.date()}->{chunk_end.date()}")
+            rows = kite.historical_data(token, chunk_start, chunk_end, interval)
+            if rows:
+                all_rows.extend(rows)
+        except Exception as e:
+            logger.warning(
+                f"Historical chunk fetch failed for {tag} "
+                f"[{chunk_start} -> {chunk_end}, {interval}]: {e}"
+            )
+    if not all_rows:
+        return all_rows
+    # Chunk boundaries can return an overlapping candle on both sides —
+    # de-dupe by timestamp and sort into one clean series.
+    seen = set()
+    deduped = []
+    for row in sorted(all_rows, key=lambda r: r.get('date')):
+        key = row.get('date')
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
 # ==================== CANDLE PATTERN ENGINE ====================
 def detect_candle_patterns(df, i):
     patterns = {}
@@ -3265,6 +3343,24 @@ class BacktestEngine:
         strat_timeframe = _get_strategy_timeframe(self.strategies_dict)
         logger.info(f"Timeframe set to {strat_timeframe} (from strategy module's own TIMEFRAME setting)")
 
+        # Fetch extra history BEFORE the user's requested `start` so
+        # indicators (e.g. EMA50) are already warm on day 1 of the
+        # requested range, instead of the backtest silently skipping the
+        # first ~min_bars_needed bars of *every* run while it accumulates
+        # enough bars from scratch (this is exactly why a single-day
+        # backtest could produce zero trades that a wider-range backtest
+        # covering the same day did produce — see _lookback_days, already
+        # used for the same reason by live scanning). This padding is
+        # fetch-only: events are still trimmed back to `start` below, so
+        # it can never itself generate a trade.
+        strat_lookback_days = _lookback_days(strat_timeframe, min_bars_needed)
+        fetch_start = start - timedelta(days=strat_lookback_days)
+        logger.info(
+            f"Warm-up padding: fetching from {fetch_start} (+{strat_lookback_days}d "
+            f"before requested start {start}) for indicator warm-up; trades will "
+            f"still only be generated from {start} onward"
+        )
+
         # One-time NIFTY 5-min history fetch spanning the whole backtest
         # range, used to reproduce live's market_trend/market_regime gates
         # (skip BREAKOUT-category strategies while the index is RANGING;
@@ -3294,17 +3390,21 @@ class BacktestEngine:
 
             token = symbol_map[sym]['token']
             try:
-                _hist_limiter.wait(f"backtest {sym}")
-                data = kite.historical_data(token, start, end, strat_timeframe)
+                data = _fetch_historical_chunked(
+                    kite, token, fetch_start, end, strat_timeframe,
+                    _hist_limiter, tag=f"backtest {sym}",
+                )
                 if data:
                     _first_dt = data[0].get('date')
                     _last_dt = data[-1].get('date')
                     logger.info(
                         f"FETCHED {sym}: {len(data)} bars  "
-                        f"[{_first_dt} -> {_last_dt}]  (requested {start} -> {end})"
+                        f"[{_first_dt} -> {_last_dt}]  "
+                        f"(requested {fetch_start} -> {end}, warm-up padded; "
+                        f"trades trimmed to {start} -> {end})"
                     )
                 else:
-                    logger.info(f"FETCHED {sym}: 0 bars returned  (requested {start} -> {end})")
+                    logger.info(f"FETCHED {sym}: 0 bars returned  (requested {fetch_start} -> {end})")
 
                 if not data or len(data) < min_bars_needed:
                     logger.debug(
@@ -3324,10 +3424,28 @@ class BacktestEngine:
                 logger.error(traceback.format_exc())
 
         events = []
-        _loop_start = max(0, min_bars_needed - 1)
+        _min_idx = max(0, min_bars_needed - 1)
         for sym, sd in symbol_data.items():
-            for i in range(_loop_start, len(sd['df'])):
-                events.append((sd['dt'].iloc[i], sym, i))
+            dt_series = sd['dt']
+            # Match tz-awareness between the user's requested `start` and
+            # this symbol's bar timestamps before comparing (Kite returns
+            # tz-aware IST timestamps; `start` parsed from a plain date
+            # string is naive) so this never raises a naive/aware
+            # comparison error.
+            cmp_start = pd.Timestamp(start)
+            series_tz = getattr(dt_series.dt, 'tz', None)
+            if series_tz is not None and cmp_start.tzinfo is None:
+                cmp_start = cmp_start.tz_localize(series_tz)
+            elif series_tz is None and cmp_start.tzinfo is not None:
+                cmp_start = cmp_start.tz_localize(None)
+            for i in range(_min_idx, len(sd['df'])):
+                # (a) enough bars behind i for indicators to be warm, AND
+                # (b) we've reached the date range actually requested —
+                # the fetch_start..start padding exists purely to warm
+                # up indicators and must never generate a trade itself.
+                if dt_series.iloc[i] < cmp_start:
+                    continue
+                events.append((dt_series.iloc[i], sym, i))
         events.sort(key=lambda e: (e[0], e[1]))
 
         logger.info(
@@ -3675,8 +3793,10 @@ class BacktestEngine:
             # Pad the start a bit so the first bars of the range still have
             # enough history behind them for ADX(14) to be non-NaN.
             fetch_start = start - timedelta(days=5)
-            _hist_limiter.wait("backtest nifty context")
-            data = kite.historical_data(256265, fetch_start, end, "3minute")
+            data = _fetch_historical_chunked(
+                kite, 256265, fetch_start, end, "3minute",
+                _hist_limiter, tag="backtest nifty context",
+            )
             if not data or len(data) < 20:
                 return None
             df = pd.DataFrame(data)
