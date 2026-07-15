@@ -208,6 +208,7 @@ var _lastOrderCount=-1;
 var _prevIndices={};
 var ptTab='overview', ptData={};
 var _sigLogAllLogs=[],_sigLogPage=1,_sigLogPP=25,_sigLogFilter='all',_sigLogFetching=false;
+var _sigLogCursor=null;
 var ptRefreshTimer=null;
 const PT_REFRESH_INTERVAL=5000;
 const PT_BG_REFRESH_INTERVAL=30000;
@@ -1064,31 +1065,27 @@ html+='</tbody>\n</table>\n</div>';el.innerHTML=html;
 
 function renderPTSigLog(el){
 var first=!el.querySelector('#sigLogContainer');
-if(first){el.innerHTML='<div class="es"><div class="spin"></div><p style="margin-top:10px">Loading...</p></div>';_sigLogPage=1;}
-_fetchSigLog(el,first);
+if(first){el.innerHTML='<div class="es"><div class="spin"></div><p style="margin-top:10px">Loading...</p></div>';_sigLogPage=1;_sigLogCursor=null;_sigLogAllLogs=[];}
+_fetchSigLogFull(el);
 }
 
-var _sigLogLastCount=-1;
 var _sigLogPollingTimer=null;
-function startSigLogPolling(){if(_sigLogPollingTimer)return;refreshSigLogBackground();_sigLogPollingTimer=setInterval(refreshSigLogBackground,4000);}
+function startSigLogPolling(){if(_sigLogPollingTimer)return;_pollSigLogIncremental();_sigLogPollingTimer=setInterval(_pollSigLogIncremental,4000);}
 function stopSigLogPolling(){if(_sigLogPollingTimer){clearInterval(_sigLogPollingTimer);_sigLogPollingTimer=null;}}
-function _fetchSigLog(el,reset){
+
+// Full snapshot fetch — used only when the tab is first opened (or after
+// an error). Replaces the whole table once; after this, background polling
+// takes over and never re-does a full replace.
+function _fetchSigLogFull(el){
 if(_sigLogFetching)return;_sigLogFetching=true;
 var today=new Date().toISOString().slice(0,10);
 fetch('/paper/signal-logs?date='+today).then(r=>r.json()).then(d=>{
     _sigLogFetching=false;
-    var newLogs=d.logs||[];
-    var changed=newLogs.length!==_sigLogLastCount;
-    _sigLogLastCount=newLogs.length;
-    _sigLogAllLogs=newLogs;
-    if(reset)_sigLogPage=1;
+    _sigLogAllLogs=d.logs||[];
+    _sigLogCursor=d.cursor||null;
+    _sigLogPage=1;
     var alive=document.getElementById('ptTabContent');
-    if(alive&&(reset||changed)){
-        var tw=alive.querySelector('.tw');
-        var sx=tw?tw.scrollLeft:0,sy=tw?tw.scrollTop:0;
-        _renderSigLogPage(alive);
-        requestAnimationFrame(()=>{var tw2=alive.querySelector('.tw');if(tw2){tw2.scrollLeft=sx;tw2.scrollTop=sy;}});
-    }
+    if(alive)_renderSigLogPage(alive);
 }).catch(()=>{
     _sigLogFetching=false;
     if(!el.querySelector('#sigLogContainer'))
@@ -1096,58 +1093,121 @@ fetch('/paper/signal-logs?date='+today).then(r=>r.json()).then(d=>{
 });
 }
 
-function refreshSigLogBackground(){
-if(ptTab!=='siglog')return;
-var el=document.getElementById('ptTabContent');if(el)_fetchSigLog(el,false);
+// Background poll — fetches only entries newer than _sigLogCursor and
+// patches the DOM in place (prepend new rows, update badge counts and the
+// pagination label) instead of tearing down and re-rendering the whole
+// table. This is what stops the table from blinking/resetting scroll every
+// few seconds while you're reading it.
+function _pollSigLogIncremental(){
+if(ptTab!=='siglog'||_sigLogFetching)return;
+if(_sigLogCursor===null)return; // initial full load hasn't landed yet
+_sigLogFetching=true;
+var today=new Date().toISOString().slice(0,10);
+fetch('/paper/signal-logs?date='+today+'&since='+encodeURIComponent(_sigLogCursor)).then(r=>r.json()).then(d=>{
+    _sigLogFetching=false;
+    var newLogs=d.logs||[];
+    if(d.cursor)_sigLogCursor=d.cursor;
+    if(!newLogs.length)return;
+    _sigLogAllLogs=newLogs.concat(_sigLogAllLogs);
+    if(_sigLogAllLogs.length>3000)_sigLogAllLogs=_sigLogAllLogs.slice(0,3000);
+    var alive=document.getElementById('ptTabContent');
+    if(alive)_applySigLogIncrement(alive,newLogs);
+}).catch(()=>{_sigLogFetching=false;});
 }
 
-function _renderSigLogPage(el){
-var logs=_sigLogAllLogs;
-var cnts={
-    'BUY_SIGNAL':0,'BUY_NO_FILL':0,
-    'SELL_SIGNAL':0,'SELL_NO_FILL':0,
-    'IN_POSITION':0,'REJECTED':0,'COOLDOWN':0,'ERROR':0
-};
-logs.forEach(l=>{
-    if(cnts[l.status]!==undefined) cnts[l.status]++;
-    else cnts['REJECTED']++;
-});
-if(_sigLogFilter!=='all'){
-    if(_sigLogFilter==='BUY_SIGNAL')
-    logs=logs.filter(l=>l.status==='BUY_SIGNAL'||l.status==='BUY_NO_FILL');
-    else if(_sigLogFilter==='SELL_SIGNAL')
-    logs=logs.filter(l=>l.status==='SELL_SIGNAL'||l.status==='SELL_NO_FILL');
-    else if(_sigLogFilter==='IN_POSITION')
-    logs=logs.filter(l=>l.status==='IN_POSITION');
-    else if(_sigLogFilter==='REJECTED')
-    logs=logs.filter(l=>['REJECTED','COOLDOWN','BLOCKED_OTHER_POS','ERROR'].includes(l.status));
+// Patches an already-rendered signal log table with newly-arrived rows,
+// without touching the rows already on screen.
+function _applySigLogIncrement(el,newLogs){
+var tbody=document.getElementById('sigLogTbody');
+if(!tbody){_renderSigLogPage(el);return;} // table not on screen yet — fall back once
+_updateSigLogBadgeCounts();
+if(_sigLogPage===1){
+    var toShow=newLogs.filter(_sigLogMatchesFilter);
+    if(toShow.length){
+        var rowsHtml=toShow.map(_sigLogRowHtml).join('');
+        tbody.insertAdjacentHTML('afterbegin',rowsHtml);
+        while(tbody.children.length>_sigLogPP)tbody.removeChild(tbody.lastElementChild);
+    }
 }
-var total=logs.length, tp=Math.ceil(total/_sigLogPP)||1;
+_updateSigLogPagination();
+}
+
+function _sigLogMatchesFilter(l){
+if(_sigLogFilter==='all')return true;
+if(_sigLogFilter==='BUY_SIGNAL')return l.status==='BUY_SIGNAL'||l.status==='BUY_NO_FILL';
+if(_sigLogFilter==='SELL_SIGNAL')return l.status==='SELL_SIGNAL'||l.status==='SELL_NO_FILL';
+if(_sigLogFilter==='IN_POSITION')return l.status==='IN_POSITION';
+if(_sigLogFilter==='REJECTED')return ['REJECTED','COOLDOWN','BLOCKED_OTHER_POS','ERROR'].includes(l.status);
+return true;
+}
+
+function _sigLogCounts(){
+var cnts={'BUY_SIGNAL':0,'BUY_NO_FILL':0,'SELL_SIGNAL':0,'SELL_NO_FILL':0,'IN_POSITION':0,'REJECTED':0,'COOLDOWN':0,'ERROR':0};
+_sigLogAllLogs.forEach(l=>{if(cnts[l.status]!==undefined)cnts[l.status]++;else cnts['REJECTED']++;});
+return cnts;
+}
+
+function _updateSigLogBadgeCounts(){
+var cnts=_sigLogCounts();
+var buyTotal=cnts['BUY_SIGNAL']+cnts['BUY_NO_FILL'];
+var sellTotal=cnts['SELL_SIGNAL']+cnts['SELL_NO_FILL'];
+var rejTotal=cnts['REJECTED']+cnts['COOLDOWN']+cnts['ERROR'];
+var setCnt=function(id,val){var e=document.getElementById(id);if(e)e.textContent=val;};
+setCnt('sigLogCntAll',_sigLogAllLogs.length);
+setCnt('sigLogCntBuy',buyTotal);
+setCnt('sigLogCntSell',sellTotal);
+setCnt('sigLogCntPos',cnts['IN_POSITION']);
+setCnt('sigLogCntRej',rejTotal);
+}
+
+function _updateSigLogPagination(){
+var el=document.getElementById('ptTabContent');if(!el)return;
+var container=document.getElementById('sigLogPagination');
+var logs=_sigLogAllLogs.filter(_sigLogMatchesFilter);
+var total=logs.length,tp=Math.ceil(total/_sigLogPP)||1;
 if(_sigLogPage>tp)_sigLogPage=tp;
-var start=(_sigLogPage-1)*_sigLogPP, pageLogs=logs.slice(start,start+_sigLogPP);
-var buyTotal  = cnts['BUY_SIGNAL']  + cnts['BUY_NO_FILL'];
-var sellTotal = cnts['SELL_SIGNAL'] + cnts['SELL_NO_FILL'];
-var rejTotal  = cnts['REJECTED'] + cnts['COOLDOWN'] + cnts['ERROR'];
-function _fBtn(filter, color, label, count, bg){
+var html=_sigLogPaginationHtml(total,tp);
+if(container)container.outerHTML=html;
+}
+
+function _sigLogPaginationHtml(total,tp){
+if(tp<=1)return '<div id="sigLogPagination"></div>';
+var pg='<div id="sigLogPagination" style="display:flex;justify-content:center;align-items:center;gap:5px;margin-top:15px;flex-wrap:wrap">';
+pg+=`<button style="background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
+    onclick="_sigLogGoPage(${_sigLogPage-1})" ${_sigLogPage<=1?'disabled':''}>‹</button>`;
+for(var p=Math.max(1,_sigLogPage-2);p<=Math.min(tp,_sigLogPage+2);p++){
+var isActive=p===_sigLogPage;
+pg+=`<button style="background:${isActive?'var(--accent)':'var(--bg2)'};color:${isActive?'white':'var(--text2)'};border:1px solid ${isActive?'var(--accent)':'var(--border)'};border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
+        onclick="_sigLogGoPage(${p})">${p}</button>`;
+}
+pg+=`<button style="background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
+    onclick="_sigLogGoPage(${_sigLogPage+1})" ${_sigLogPage>=tp?'disabled':''}>›</button>`;
+pg+=`<span style="font-size:10px;color:var(--text3);font-family:Space Mono,monospace">${_sigLogPage}/${tp} · ${total} entries</span></div>`;
+return pg;
+}
+
+function _sigLogFBtn(filter, color, label, count, bg, id){
     var active=_sigLogFilter===filter;
-    return `<button onclick="_sigLogSetFilter('${filter}')"
+    return `<button id="${id}" onclick="_sigLogSetFilter('${filter}')"
     style="padding:5px 10px;border-radius:20px;font-size:10px;font-weight:600;cursor:pointer;
             font-family:Space Mono,monospace;white-space:nowrap;
             border:1px solid ${active?color:'var(--border)'};
             background:${active?bg:'var(--bg2)'};
             color:${active?color:'var(--text1)'}"
-    >${label} (${count})</button>`;
+    >${label} (<span id="sigLogCnt${id.replace('sigLogBtn','')}">${count}</span>)</button>`;
 }
-var ft='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;background:var(--bg1);padding:10px;border-radius:8px;border:1px solid var(--border);">'
-    +_fBtn('all',       'var(--blue)',  '📊 ALL',     logs.length,              'var(--accent)')
-    +_fBtn('BUY_SIGNAL','#00e676',     '🟢 BUY',     buyTotal,                 'rgba(0,230,118,.2)')
-    +_fBtn('SELL_SIGNAL','#ff1744',    '🔴 SELL',    sellTotal,                'rgba(255,23,68,.2)')
-    +_fBtn('IN_POSITION','var(--gold)','🟡 IN POS',  cnts['IN_POSITION'],      'rgba(240,192,64,.2)')
-    +_fBtn('REJECTED',  'var(--text1)','⚫ REJECTED', rejTotal,                'var(--bg3)')
+function _sigLogFilterBarHtml(){
+var cnts=_sigLogCounts();
+var buyTotal=cnts['BUY_SIGNAL']+cnts['BUY_NO_FILL'];
+var sellTotal=cnts['SELL_SIGNAL']+cnts['SELL_NO_FILL'];
+var rejTotal=cnts['REJECTED']+cnts['COOLDOWN']+cnts['ERROR'];
+return '<div id="sigLogFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;background:var(--bg1);padding:10px;border-radius:8px;border:1px solid var(--border);">'
+    +_sigLogFBtn('all',       'var(--blue)',  '📊 ALL',     _sigLogAllLogs.length,    'var(--accent)','sigLogBtnAll')
+    +_sigLogFBtn('BUY_SIGNAL','#00e676',     '🟢 BUY',     buyTotal,                 'rgba(0,230,118,.2)','sigLogBtnBuy')
+    +_sigLogFBtn('SELL_SIGNAL','#ff1744',    '🔴 SELL',    sellTotal,                'rgba(255,23,68,.2)','sigLogBtnSell')
+    +_sigLogFBtn('IN_POSITION','var(--gold)','🟡 IN POS',  cnts['IN_POSITION'],      'rgba(240,192,64,.2)','sigLogBtnPos')
+    +_sigLogFBtn('REJECTED',  'var(--text1)','⚫ REJECTED', rejTotal,                'var(--bg3)','sigLogBtnRej')
     +'</div>';
-if(total===0){
-    el.innerHTML=ft+'<div style="background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--text3)">No signals match filter</div>';
-    return;
 }
 function _statusBadge(status){
     switch(status){
@@ -1205,12 +1265,11 @@ function _strategyDataCell(l){
     }).join('');
     return '<td style="font-family:Space Mono,monospace;font-size:10px;line-height:1.5;white-space:normal;min-width:200px">'+html+'</td>';
 }
-var rows='';
-pageLogs.forEach(l=>{
+function _sigLogRowHtml(l){
     var bs=l.buy_score||0, ss=l.sell_score||0;
     var htf=l.htf_bull!=null?l.htf_bull:0.5;
     var htfColor=htf>=0.7?'#00e676':htf<=0.3?'#ff1744':'var(--text2)';
-    rows+=`<tr style="${_rowBg(l.status)}">
+    return `<tr style="${_rowBg(l.status)}">
     <td style="white-space:nowrap;font-size:10px;color:var(--text2)">${l.time||'--:--'}</td>
     <td style="min-width:90px">
         <span style="font-weight:700;color:var(--gold);font-family:Space Mono,monospace;font-size:12px">${l.symbol||'---'}</span>
@@ -1227,7 +1286,24 @@ pageLogs.forEach(l=>{
     <td>${_statusBadge(l.status)}</td>
     ${_reasonCell(l)}
      </tr>`;
-});
+}
+
+// Full render — builds the filter bar, table, and pagination from scratch
+// and replaces #ptTabContent. Called once when the Signal Log tab is first
+// opened (and as a fallback if incremental patching can't find its
+// anchors). Background polling afterwards uses _applySigLogIncrement
+// instead of this, so the table doesn't get torn down every few seconds.
+function _renderSigLogPage(el){
+var logs=_sigLogAllLogs.filter(_sigLogMatchesFilter);
+var total=logs.length, tp=Math.ceil(total/_sigLogPP)||1;
+if(_sigLogPage>tp)_sigLogPage=tp;
+var start=(_sigLogPage-1)*_sigLogPP, pageLogs=logs.slice(start,start+_sigLogPP);
+var ft=_sigLogFilterBarHtml();
+if(total===0){
+    el.innerHTML='<div id="sigLogContainer">'+ft+'<div style="background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--text3)">No signals match filter</div></div>';
+    return;
+}
+var rows=pageLogs.map(_sigLogRowHtml).join('');
 var table=`
     <div style="background:var(--bg1);border:1px solid var(--border);border-radius:8px;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;min-width:900px">
@@ -1244,24 +1320,11 @@ var table=`
             <th style="padding:9px 8px;font-size:9px;color:var(--text3);font-family:Space Mono,monospace">REASON</th>
           </tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody id="sigLogTbody">${rows}</tbody>
       </table>
     </div>`;
-var pg='';
-if(tp>1){
-    pg='<div style="display:flex;justify-content:center;align-items:center;gap:5px;margin-top:15px;flex-wrap:wrap">';
-    pg+=`<button style="background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
-        onclick="_sigLogGoPage(${_sigLogPage-1})" ${_sigLogPage<=1?'disabled':''}>‹</button>`;
-    for(var p=Math.max(1,_sigLogPage-2);p<=Math.min(tp,_sigLogPage+2);p++){
-    var isActive=p===_sigLogPage;
-    pg+=`<button style="background:${isActive?'var(--accent)':'var(--bg2)'};color:${isActive?'white':'var(--text2)'};border:1px solid ${isActive?'var(--accent)':'var(--border)'};border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
-            onclick="_sigLogGoPage(${p})">${p}</button>`;
-    }
-    pg+=`<button style="background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px"
-        onclick="_sigLogGoPage(${_sigLogPage+1})" ${_sigLogPage>=tp?'disabled':''}>›</button>`;
-    pg+=`<span style="font-size:10px;color:var(--text3);font-family:Space Mono,monospace">${_sigLogPage}/${tp} · ${total} entries</span></div>`;
-}
-el.innerHTML=ft+table+pg;
+var pg=_sigLogPaginationHtml(total,tp);
+el.innerHTML='<div id="sigLogContainer">'+ft+table+pg+'</div>';
 }
 
 function _sigLogSetFilter(filter){

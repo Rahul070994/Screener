@@ -264,7 +264,10 @@ def _ema_momentum_diagnostics(df, ind):
         }
         if cross_idx is not None:
             try:
-                out['Crossed@'] = str(df['date'].iloc[cross_idx])[-8:-3] if 'date' in df.columns else cross_idx
+                if 'date' in df.columns:
+                    out['Crossed@'] = pd.to_datetime(df['date'].iloc[cross_idx]).strftime('%H:%M')
+                else:
+                    out['Crossed@'] = cross_idx
             except Exception:
                 pass
             age_minutes = _minutes_between(df, cross_idx, len(df) - 1)

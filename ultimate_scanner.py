@@ -2371,7 +2371,7 @@ class PaperTradingEngine:
             for sym in list(self.data['positions'].keys()):
                 self._close_position_nolock(sym, reason='INTRADAY_SQ_OFF')
     
-    def get_signal_logs(self, date=None, status=None, limit=100):
+    def get_signal_logs(self, date=None, status=None, limit=100, since=None):
         with self._lock:
             logs = list(self._signal_logs)
             if date:
@@ -2381,6 +2381,14 @@ class PaperTradingEngine:
                     logs = [l for l in logs if l.get('status') in ['REJECTED', 'COOLDOWN', 'BLOCKED_OTHER_POS']]
                 else:
                     logs = [l for l in logs if l.get('status') == status]
+            # Incremental-fetch support: entries are stored newest-first
+            # (appendleft), each stamped with an ISO 'timestamp' at insert
+            # time. When the caller passes 'since' (the newest timestamp it
+            # already has), only entries strictly newer than that are
+            # returned, so the frontend can prepend just the new rows
+            # instead of re-fetching and re-rendering the whole table.
+            if since:
+                logs = [l for l in logs if l.get('timestamp', '') > since]
             return logs[:limit]
     
     def _add_signal_log(self, log_entry):
@@ -4600,12 +4608,20 @@ def paper_signal_logs():
             return jsonify({'status': 'error', 'msg': 'Not logged in'})
         date = request.args.get('date', '')
         status = request.args.get('status', '')
+        since = request.args.get('since', '')
         logs = pe.get_signal_logs(
             date=date if date else None,
             status=status if status else None,
-            limit=300
+            limit=300,
+            since=since if since else None
         )
-        return jsonify({'logs': logs})
+        # 'cursor' is the timestamp of the newest entry returned (logs are
+        # newest-first). The frontend should store this and pass it back as
+        # ?since=<cursor> on the next poll to get only rows it doesn't have
+        # yet. If nothing new came back, echo the caller's own 'since' so
+        # the cursor never goes backwards.
+        cursor = logs[0]['timestamp'] if logs else (since or None)
+        return jsonify({'logs': logs, 'cursor': cursor})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
 
