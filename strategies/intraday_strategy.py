@@ -19,6 +19,14 @@ TIMEFRAME = "3minute"  # this strategy's own candle interval, read by ultimate_s
 PIVOT_ZONE_LOW_PCT = 0.30    # lower bound of the "middle" zone within a pivot band (30%)
 PIVOT_ZONE_HIGH_PCT = 0.70   # upper bound of the "middle" zone within a pivot band (70%)
 
+# --- v10 additions: cut losers earlier, stop capping winners at EOD ------------------
+# Backtest evidence this addresses: losing trades were only ever closed by the EMA
+# reversal exit AFTER giving back most of the SL risk (never actually hit SL), while
+# winning trades were cut short by EOD_SQUAREOFF at a small fraction of target because
+# they entered too late in the session to have time to run.
+MAX_ENTRY_TIME = "14:00"       # no NEW entries after this time — not enough session left to reach target before EOD squareoff
+EARLY_FADE_THRESHOLD_PCT = EMA_DIFF_THRESHOLD_PCT * 0.5  # if momentum decays back to under half the entry threshold, exit now instead of waiting for a full EMA20/50 flip
+
 
 def _session_start_idx(df):
     """Index of the first candle of today's session inside the window (0 if unknown)."""
@@ -195,6 +203,24 @@ def _pivot_midzone_gate(current_price, cross_ref_price, levels):
     return passed, info
 
 
+def _entry_time_ok(df):
+    """
+    v10: reject NEW entries once the session clock has passed MAX_ENTRY_TIME.
+    Backtest showed winning trades entering at 10:45/12:27 only reached a small
+    fraction of target before 15:15 EOD_SQUAREOFF — they simply ran out of time.
+    This does not affect exits of already-open positions, only new signals.
+    """
+    if 'date' not in df.columns or len(df) == 0:
+        return True
+    try:
+        ts = pd.to_datetime(df['date'].iloc[-1])
+        hh, mm = MAX_ENTRY_TIME.split(':')
+        cutoff = ts.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        return ts <= cutoff
+    except Exception:
+        return True  # fail open — don't block entries on a parsing hiccup
+
+
 def _minutes_between(df, idx_from, idx_to):
     """Minutes between two bars' timestamps; None if 'date' is missing/unparsable."""
     if 'date' not in df.columns:
@@ -230,6 +256,9 @@ def _signal(df, ind, want_bullish):
 
     age_minutes = _minutes_between(df, cross_idx, last_i)  # staleness guard
     if age_minutes is not None and age_minutes > MAX_SIGNAL_DELAY_MINUTES:
+        return False
+
+    if not _entry_time_ok(df):  # v10: too late in the session to realistically reach target
         return False
 
     # Breakout reference is now FROZEN at the crossover bar (inclusive) and
@@ -342,11 +371,41 @@ def _ema_momentum_reversal_exit(df, ind, pos):
         if np.isnan(e20) or np.isnan(e50):
             return False
         side = pos.get('side')
+
+        # --- Original check: full EMA20/50 flip back ---
         if side == 'BUY':
-            return e20 < e50   # was above EMA50 at entry, now crossed back below
-        if side == 'SELL':
-            return e20 > e50   # was below EMA50 at entry, now crossed back above
-        return False
+            full_reversal = e20 < e50   # was above EMA50 at entry, now crossed back below
+        elif side == 'SELL':
+            full_reversal = e20 > e50   # was below EMA50 at entry, now crossed back above
+        else:
+            return False
+        if full_reversal:
+            return True
+
+        # --- v10: early-fade exit -----------------------------------------------------
+        # By the time EMA20/50 fully flips back, price has usually already run most of
+        # the way toward SL (this is what the backtest showed: HYUNDAI and NESTLEIND
+        # both closed via this function well after giving back the bulk of the risk
+        # budget, without ever technically touching SL). Instead of waiting for the
+        # full flip, exit as soon as the EMA20-vs-EMA50 gap has decayed back to under
+        # half of what was required to enter in the first place — i.e. the move that
+        # justified the trade is fading, cut it there rather than at the finish line.
+        try:
+            session_start = _session_start_idx(df)
+            direction = 'up' if side == 'BUY' else 'down'
+            d, cross_idx = _find_last_crossover(ind, session_start=session_start)
+            if d != direction or cross_idx is None:
+                return False
+            e20_at_cross = float(ind['ema_20'].iloc[cross_idx])
+            if e20_at_cross == 0 or np.isnan(e20_at_cross):
+                return False
+            if side == 'BUY':
+                diff_pct = ((e20 - e20_at_cross) / e20_at_cross) * 100.0
+            else:
+                diff_pct = ((e20_at_cross - e20) / e20_at_cross) * 100.0
+            return diff_pct < EARLY_FADE_THRESHOLD_PCT
+        except Exception:
+            return False
     except Exception as e:
         logger.debug(f"EMA_MOMENTUM reversal-exit check error: {e}")
         return False

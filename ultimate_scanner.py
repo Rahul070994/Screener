@@ -3562,6 +3562,18 @@ class BacktestEngine:
                         exit_reason = 'STRATEGY_EXIT'
 
                 if exit_price is None:
+                    # v10: mirror live's _update_trailing_stop call (same
+                    # position in the sequence: after reversal-exit, before
+                    # stoploss/target check) — previously backtest skipped
+                    # this entirely, so trades never got the breakeven-lock
+                    # or ATR trail live/paper trading actually applies.
+                    move_pct = (
+                        ((ltp - pos['entry_price']) / pos['entry_price'] * 100)
+                        if pos['side'] == 'BUY'
+                        else ((pos['entry_price'] - ltp) / pos['entry_price'] * 100)
+                    )
+                    PaperTradingEngine._update_trailing_stop(self, pos, ltp, move_pct, bar_mins)
+
                     if pos['side'] == 'BUY':
                         if bar_low <= pos['stoploss']:
                             exit_price = self._slip(pos['stoploss'], exit_action)
@@ -3755,6 +3767,12 @@ class BacktestEngine:
                 'entry_time': bar_time,
                 'entry_date': bar_dt.date(),
                 'strategy': best_strategy,
+                # v10: needed by PaperTradingEngine._update_trailing_stop, which
+                # backtest now calls each bar to mirror live's trailing-SL
+                # behavior (breakeven-lock at +0.3%, tighten at +1%, ATR trail).
+                'trail_activated': False,
+                'peak_price': fill_price,
+                'entry_atr': atr if (atr and atr > 0) else None,
             }
             wallet -= fill_price * qty * margin_pct
             logger.info(
