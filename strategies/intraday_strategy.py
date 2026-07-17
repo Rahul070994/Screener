@@ -1,17 +1,25 @@
-# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v1
+# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v2
 #
 # Setup:
-#   1. Mark the HIGH and LOW of the first 3-minute candle of the day.
-#   2. Look only at the 2nd candle of the day (the very next bar).
-#      - BUY  if the 2nd candle CLOSES above the 1st candle's HIGH.
-#      - SELL if the 2nd candle CLOSES below the 1st candle's LOW.
+#   1. Mark the HIGH and LOW of the first 3-minute candle of the day
+#      (09:15–09:18).
+#   2. From then on, watch EVERY candle (not just the next one) up to
+#      MONITOR_CUTOFF_TIME (13:00):
+#      - BUY  if that candle CLOSES above the 1st candle's HIGH.
+#      - SELL if that candle CLOSES below the 1st candle's LOW.
+#      No new signal is generated once the candle's time is past
+#      MONITOR_CUTOFF_TIME.
 #   3. Extra confirmation:
-#      - BUY  requires BOTH the 1st candle and the 2nd (breakout) candle
-#        to be GREEN (close > open).
-#      - SELL requires BOTH the 1st candle and the 2nd (breakout) candle
-#        to be RED (close < open).
+#      - BUY  requires BOTH the 1st candle and the breakout candle to be
+#        GREEN (close > open).
+#      - SELL requires BOTH the 1st candle and the breakout candle to be
+#        RED (close < open).
 #
 # No EMA/RSI/volume/ATR filters — deliberately minimal.
+#
+# SL/Target: this strategy does NOT define its own SL/Target logic.
+# The scanner's flat target_pct / stoploss_pct (Settings → Target & Stop
+# Loss) is used instead, same as every other strategy.
 
 import numpy as np
 import pandas as pd
@@ -21,13 +29,23 @@ logger = logging.getLogger(__name__)
 
 # --- Core parameters --------------------------------------------------------
 TIMEFRAME = "3minute"
-# Only need the first candle of the day + the breakout (2nd) candle, but we
-# keep a small buffer so the session-start lookup always has both bars
-# available inside the trimmed window the scanner passes to strategy funcs.
-MIN_BARS_REQUIRED = 5
 
-# --- Risk management (used only if something calls get_sl_target) ----------
-RISK_REWARD_RATIO = 2.0
+# The scanner trims the fetched historical data down to the last
+# MIN_BARS_REQUIRED bars before handing it to strategy functions (see
+# ultimate_scanner.py: `df_w = df.iloc[-min_bars_needed:]`). _session_start_idx
+# below finds "the first candle of today" by scanning for the oldest bar in
+# that trimmed window that still belongs to today — so if this value is too
+# small, the true 09:15 candle scrolls out of the window as the day goes on,
+# and the "first candle" the strategy sees quietly becomes some other,
+# WRONG candle. This is what was silently corrupting the high/low reference
+# (and therefore any SL/Target derived from it) after the first ~15 minutes
+# of the session.
+#
+# We need the window to comfortably cover 09:15 -> MONITOR_CUTOFF_TIME on a
+# 3-minute timeframe: (13:00 - 09:15) = 225 minutes / 3 = 75 candles.
+# Add a generous buffer for holidays/half-days/missing bars.
+MONITOR_CUTOFF_TIME = "13:00"  # HH:MM, 24h — no NEW ORB signal after this time
+MIN_BARS_REQUIRED = 90
 
 # ----------------------------------------------------------------------------
 
@@ -54,6 +72,20 @@ def _is_red(row):
     return float(row['close']) < float(row['open'])
 
 
+def _within_monitor_window(df, last_idx):
+    """True if the last candle's time-of-day is at or before
+    MONITOR_CUTOFF_TIME. No 'date' column -> fail open (allow), same as
+    the rest of this file's defensive fallbacks."""
+    if 'date' not in df.columns:
+        return True
+    try:
+        cutoff_h, cutoff_m = (int(x) for x in MONITOR_CUTOFF_TIME.split(':'))
+        ts = pd.to_datetime(df.iloc[last_idx]['date'])
+        return (ts.hour, ts.minute) <= (cutoff_h, cutoff_m)
+    except Exception:
+        return True
+
+
 def _orb_signal(df, want_bullish):
     if len(df) < 2:
         return False
@@ -64,9 +96,13 @@ def _orb_signal(df, want_bullish):
     session_start = _session_start_idx(df)
     last_idx = len(df) - 1
 
-    # Only fire on the 2nd candle of the session (the breakout candle).
-    # Anything before or after that is not a valid signal bar for this setup.
-    if last_idx != session_start + 1:
+    # Any candle AFTER the first candle of the day is a valid breakout
+    # candle — not just the one immediately following it.
+    if last_idx <= session_start:
+        return False
+
+    # No new signal once we're past the monitoring cutoff.
+    if not _within_monitor_window(df, last_idx):
         return False
 
     first_candle = df.iloc[session_start]
@@ -87,41 +123,6 @@ def _orb_signal(df, want_bullish):
         if not (_is_red(first_candle) and _is_red(breakout_candle)):
             return False
         return breakout_close < first_low
-
-
-# --- SL/Target calculation ---------------------------------------------
-def get_sl_target(df, ind, side, entry_price):
-    """
-    Simple SL/Target for this setup:
-      BUY  -> SL = first candle's LOW,  Target = entry + risk * RISK_REWARD_RATIO
-      SELL -> SL = first candle's HIGH, Target = entry - risk * RISK_REWARD_RATIO
-    Falls back to a small fixed % if the first candle's range is unusable.
-    """
-    session_start = _session_start_idx(df)
-    try:
-        first_candle = df.iloc[session_start]
-        first_high = float(first_candle['high'])
-        first_low = float(first_candle['low'])
-    except Exception:
-        first_high = entry_price * 1.005
-        first_low = entry_price * 0.995
-
-    if side.upper() == 'BUY':
-        sl = first_low
-        risk = entry_price - sl
-        if risk <= 0:
-            risk = entry_price * 0.005
-            sl = entry_price - risk
-        target = entry_price + risk * RISK_REWARD_RATIO
-    else:  # SELL
-        sl = first_high
-        risk = sl - entry_price
-        if risk <= 0:
-            risk = entry_price * 0.005
-            sl = entry_price + risk
-        target = entry_price - risk * RISK_REWARD_RATIO
-
-    return float(sl), float(target)
 
 
 # --- Entry functions ---------------------------------------------------
