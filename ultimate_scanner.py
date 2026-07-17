@@ -969,6 +969,53 @@ def _get_strategy_timeframe(strategies_dict, fallback='3minute'):
         )
     return next(iter(distinct))
 
+
+def _session_anchored_window(df, ind, min_bars_needed):
+    """Build the (df_w, ind_w) window handed to strategy functions.
+
+    The old approach everywhere in this file was a blind trailing slice:
+        df_w = df.iloc[-min_bars_needed:]
+    That's fine for strategies that only care about "the last N bars"
+    (EMA/RSI-style), but it silently drops the START of the current
+    trading session once the session has run longer than min_bars_needed
+    bars — which breaks any strategy that needs "the first candle of
+    today" (e.g. Opening Range Breakout), no matter what value
+    min_bars_needed is set to:
+      - too small -> loses the real 09:15 candle by mid-morning, so the
+        strategy quietly locks onto the wrong "first candle."
+      - too large -> delays the FIRST time this symbol is even evaluated
+        each day past whatever monitoring cutoff the strategy uses,
+        since the engine won't look at a symbol until min_bars_needed
+        bars exist at all.
+    There is no single min_bars_needed value that avoids both failure
+    modes with a pure trailing window — the window has to be anchored to
+    the session start instead.
+
+    This always keeps every bar from the start of TODAY'S session (the
+    last row's calendar date) in the window, while still guaranteeing at
+    least min_bars_needed bars are included (going further back before
+    today if needed) for indicator warm-up (EMA50 etc. on strategies that
+    need it). Whichever start point is EARLIER wins.
+    """
+    if len(df) == 0:
+        return df, ind
+    if 'date' not in df.columns:
+        # No date column to anchor on — fall back to the old trailing
+        # window rather than guessing.
+        return (df.iloc[-min_bars_needed:].reset_index(drop=True),
+                ind.iloc[-min_bars_needed:].reset_index(drop=True))
+    try:
+        dates = pd.to_datetime(df['date'])
+        last_date = dates.iloc[-1].date()
+        same_day_idxs = np.flatnonzero(dates.dt.date.values == last_date)
+        session_start_i = int(same_day_idxs[0]) if len(same_day_idxs) else 0
+    except Exception:
+        session_start_i = 0
+    warmup_start_i = max(0, len(df) - min_bars_needed)
+    window_start = min(session_start_i, warmup_start_i)
+    return (df.iloc[window_start:].reset_index(drop=True),
+            ind.iloc[window_start:].reset_index(drop=True))
+
 def _lookback_days(timeframe, min_bars_needed, floor_days=6):
     """
     How many calendar days of history to request for a given candle
@@ -2532,8 +2579,7 @@ class PaperTradingEngine:
             allow_buy = True
             allow_sell = True
 
-            df_w = df.iloc[-min_bars_needed:].reset_index(drop=True)
-            ind_w = ind.iloc[-min_bars_needed:].reset_index(drop=True)
+            df_w, ind_w = _session_anchored_window(df, ind, min_bars_needed)
 
             strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
             st5_total = strat5_b + strat5_s
@@ -3650,8 +3696,7 @@ class BacktestEngine:
                 if cooldown_elapsed < cooldown_window:
                     continue
 
-            df_w = df_slice.iloc[-min_bars_needed:].reset_index(drop=True)
-            ind_w = ind_slice.iloc[-min_bars_needed:].reset_index(drop=True)
+            df_w, ind_w = _session_anchored_window(df_slice, ind_slice, min_bars_needed)
             b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
             vtot = b + s
             buy_pct = (b / vtot * 100) if vtot > 0 else 50.0

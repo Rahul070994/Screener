@@ -30,22 +30,25 @@ logger = logging.getLogger(__name__)
 # --- Core parameters --------------------------------------------------------
 TIMEFRAME = "3minute"
 
-# The scanner trims the fetched historical data down to the last
-# MIN_BARS_REQUIRED bars before handing it to strategy functions (see
-# ultimate_scanner.py: `df_w = df.iloc[-min_bars_needed:]`). _session_start_idx
-# below finds "the first candle of today" by scanning for the oldest bar in
-# that trimmed window that still belongs to today — so if this value is too
-# small, the true 09:15 candle scrolls out of the window as the day goes on,
-# and the "first candle" the strategy sees quietly becomes some other,
-# WRONG candle. This is what was silently corrupting the high/low reference
-# (and therefore any SL/Target derived from it) after the first ~15 minutes
-# of the session.
+# ultimate_scanner.py now builds the strategy window with
+# _session_anchored_window(), which always keeps every bar from the start
+# of TODAY'S session (not just a trailing MIN_BARS_REQUIRED-sized slice) —
+# so _session_start_idx() below reliably finds the true 09:15 candle no
+# matter how far into the day it's called. MIN_BARS_REQUIRED here only
+# needs to cover this strategy's own minimum ("at least a 1st + a
+# breakout candle exist") plus a small buffer — it is NOT what limits how
+# late in the day a signal can fire; MONITOR_CUTOFF_TIME does that.
 #
-# We need the window to comfortably cover 09:15 -> MONITOR_CUTOFF_TIME on a
-# 3-minute timeframe: (13:00 - 09:15) = 225 minutes / 3 = 75 candles.
-# Add a generous buffer for holidays/half-days/missing bars.
+# IMPORTANT: don't inflate this to "cover the whole monitoring window" —
+# the engine won't evaluate a symbol at all until MIN_BARS_REQUIRED bars
+# exist, so an oversized value here delays the FIRST check of the day
+# past MONITOR_CUTOFF_TIME and the strategy can never fire. (This is
+# exactly the bug in the previous version of this file — MIN_BARS_REQUIRED
+# was set to 90 to work around the old trailing-window issue, which meant
+# the engine's first-ever check of the day landed at 13:42, already past
+# the 13:00 cutoff.)
 MONITOR_CUTOFF_TIME = "13:00"  # HH:MM, 24h — no NEW ORB signal after this time
-MIN_BARS_REQUIRED = 90
+MIN_BARS_REQUIRED = 5
 
 # ----------------------------------------------------------------------------
 
