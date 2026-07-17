@@ -1697,7 +1697,21 @@ class PaperTradingEngine:
         entry = pos['entry_price']
         updated = False
         atr = pos.get('entry_atr')
-        if atr and atr > 0:
+        # NOTE: this used to run unconditionally on every bar, including the
+        # very first one checked right after entry — when peak_price still
+        # equals entry (zero price movement yet). new_sl = entry ± 1.5*ATR
+        # is, for any low/medium-ATR stock, tighter than a normal 3-5%
+        # configured Stop Loss, so it silently overwrote the user's
+        # configured SL within one bar of opening the position — before the
+        # trade had even had a chance to move in its favor. A *trailing*
+        # stop should only ever tighten once the position is in profit
+        # (peak has advanced past entry), same as the breakeven-lock/
+        # tighten blocks just below this one, which are correctly gated by
+        # current_move_pct. Gating this block the same way means the
+        # configured target_pct/stoploss_pct set at entry actually holds
+        # until the trade is genuinely in profit, instead of being replaced
+        # almost immediately regardless of what the user configured.
+        if atr and atr > 0 and current_move_pct > 0:
             peak_price = pos.get('peak_price', entry)
             if side == 'BUY':
                 new_sl = round(peak_price - 1.5 * atr, 2)
