@@ -1913,33 +1913,28 @@ class PaperTradingEngine:
         # target_pct / stoploss_pct / max_target_pct / max_sl_pct are set in
         # __init__ from the user's Settings (per trading mode), not fixed
         # constants — see UserManager.get_user_risk_config().
-        atr_pct = (atr / price) * 100 if price > 0 else 1.0
-        if atr_pct > 2.0:
-            if side == 'BUY':
-                sl = round(price - atr * 1.0, 2)
-                tgt = round(price + atr * 1.5, 2)
-            else:
-                sl = round(price + atr * 1.0, 2)
-                tgt = round(price - atr * 1.5, 2)
-        elif atr_pct < 0.5:
-            # Low-volatility bars: tighten proportionally to the user's
-            # configured target/SL (same 0.5x/0.6x ratio the old fixed
-            # 0.5%/0.3% values implied against the old fixed 1.0%/0.5%).
-            tight_tgt_pct = self.target_pct * 0.5
-            tight_sl_pct = self.stoploss_pct * 0.6
-            if side == 'BUY':
-                tgt = round(price * (1.0 + tight_tgt_pct), 2)
-                sl = round(price * (1.0 - tight_sl_pct), 2)
-            else:
-                tgt = round(price * (1.0 - tight_tgt_pct), 2)
-                sl = round(price * (1.0 + tight_sl_pct), 2)
+        #
+        # NOTE: this used to branch on atr_pct and — for the very common
+        # case of a low-volatility bar (atr_pct < 0.5%) — silently SHRINK
+        # the user's configured target/SL down to 0.5x/0.6x of what they
+        # asked for (e.g. a configured 1%/5% quietly became ~0.5%/~3%, and
+        # for higher-priced/low-vol names atr_pct%<0.5 was the norm, not
+        # the exception). That meant "Target %" / "Stop Loss %" in
+        # Settings/Backtest almost never matched the actual target/SL a
+        # position opened with, and stops far tighter than configured got
+        # hit by ordinary noise within minutes. `atr` is intentionally
+        # unused now — kept as a parameter only so callers don't need to
+        # change — target/SL are always exactly the configured percentages,
+        # with max_target_pct/max_sl_pct still acting as a hard outer
+        # ceiling (never a reason to shrink, only ever to cap runaway
+        # widening, which can't happen here since it's no longer computed
+        # from ATR at all).
+        if side == 'BUY':
+            tgt = round(price * (1.0 + self.target_pct), 2)
+            sl = round(price * (1.0 - self.stoploss_pct), 2)
         else:
-            if side == 'BUY':
-                tgt = round(price * (1.0 + self.target_pct), 2)
-                sl = round(price * (1.0 - self.stoploss_pct), 2)
-            else:
-                tgt = round(price * (1.0 - self.target_pct), 2)
-                sl = round(price * (1.0 + self.stoploss_pct), 2)
+            tgt = round(price * (1.0 - self.target_pct), 2)
+            sl = round(price * (1.0 + self.stoploss_pct), 2)
         if side == 'BUY':
             tgt = min(tgt, round(price * (1.0 + self.max_target_pct), 2))
             sl = max(sl, round(price * (1.0 - self.max_sl_pct), 2))
@@ -3963,30 +3958,23 @@ class BacktestEngine:
         # same hard min/max caps via self.max_target_pct/self.max_sl_pct.
         # The previous version here used an unrelated linear-scaling
         # formula that didn't reproduce live's target/SL levels at all.
-        atr_pct = (atr / price) * 100 if price > 0 else 1.0
-        if atr_pct > 2.0:
-            if side == 'BUY':
-                sl = round(price - atr * 1.0, 2)
-                tgt = round(price + atr * 1.5, 2)
-            else:
-                sl = round(price + atr * 1.0, 2)
-                tgt = round(price - atr * 1.5, 2)
-        elif atr_pct < 0.5:
-            tight_tgt_pct = self.target_pct * 0.5
-            tight_sl_pct = self.stoploss_pct * 0.6
-            if side == 'BUY':
-                tgt = round(price * (1.0 + tight_tgt_pct), 2)
-                sl = round(price * (1.0 - tight_sl_pct), 2)
-            else:
-                tgt = round(price * (1.0 - tight_tgt_pct), 2)
-                sl = round(price * (1.0 + tight_sl_pct), 2)
+        # NOTE: this used to branch on atr_pct and, for atr_pct < 0.5%
+        # (the common case for higher-priced/lower-volatility names on a
+        # 3-min chart), silently shrink the requested target/SL to
+        # 0.5x/0.6x of the Backtest form's Target %/Stop Loss % — so a
+        # configured 1%/5% could actually open trades at ~0.5%/~3%, or
+        # tighter, with no indication in the UI that the override wasn't
+        # being honored. `atr` is intentionally unused now (kept as a
+        # parameter for call-site compatibility) — target/SL are always
+        # exactly the configured percentages, with max_target_pct/
+        # max_sl_pct still acting as a hard outer ceiling only (nothing
+        # here can trigger widening past it anymore).
+        if side == 'BUY':
+            tgt = round(price * (1.0 + self.target_pct), 2)
+            sl = round(price * (1.0 - self.stoploss_pct), 2)
         else:
-            if side == 'BUY':
-                tgt = round(price * (1.0 + self.target_pct), 2)
-                sl = round(price * (1.0 - self.stoploss_pct), 2)
-            else:
-                tgt = round(price * (1.0 - self.target_pct), 2)
-                sl = round(price * (1.0 + self.stoploss_pct), 2)
+            tgt = round(price * (1.0 - self.target_pct), 2)
+            sl = round(price * (1.0 + self.stoploss_pct), 2)
         if side == 'BUY':
             tgt = min(tgt, round(price * (1.0 + self.max_target_pct), 2))
             sl = max(sl, round(price * (1.0 - self.max_sl_pct), 2))
