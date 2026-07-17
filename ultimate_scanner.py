@@ -82,32 +82,9 @@ AVAILABLE_STRATEGY_DIAGNOSTICS = strategies.STRATEGY_DIAGNOSTICS
 # A strategy opts in by registering a function here; the scanner has no
 # built-in idea of what "the setup reversed" means for any given strategy
 # (EMA flip, RSI exhaustion, whatever) — that logic lives entirely in the
-# strategy module. Unlike the other AVAILABLE_STRATEGY_* lookups above,
-# this one used to silently default to {} via getattr(strategies,
-# 'STRATEGY_EXITS', {}) if strategies.py didn't define it — which is
-# exactly what was happening, and silently disabled every strategy's
-# reversal-exit. Now it's loud instead of silent (see warning below).
-if hasattr(strategies, 'STRATEGY_EXITS'):
-    AVAILABLE_STRATEGY_EXITS = strategies.STRATEGY_EXITS
-else:
-    # strategies.py hasn't been updated to aggregate STRATEGY_EXITS from
-    # each strategy module's own `strategy_exits` dict (unlike
-    # STRATEGY_REGISTRY/STRATEGY_META/STRATEGY_DIAGNOSTICS, which ARE
-    # aggregated). Silently defaulting to {} here means every strategy's
-    # reversal-exit (e.g. intraday_strategy.py's EMA20/50 flip exit) is
-    # dead code -- positions only ever close on target/SL/EOD squareoff,
-    # which can hold a reversed position for hours before exiting.
-    # Surface this loudly instead of swallowing it.
-    AVAILABLE_STRATEGY_EXITS = {}
-    warnings.warn(
-        "strategies.py has no STRATEGY_EXITS attribute -- no strategy "
-        "reversal-exit will ever fire. Add, in strategies.py, the same "
-        "kind of aggregation used for STRATEGY_META/STRATEGY_REGISTRY, "
-        "e.g.: STRATEGY_EXITS = {} ; for _m in <loaded strategy modules>: "
-        "STRATEGY_EXITS.update(getattr(_m, 'strategy_exits', {}))",
-        RuntimeWarning,
-    )
-    print("WARNING: STRATEGY_EXITS missing from strategies.py -- reversal-exits are disabled for ALL strategies.")
+# strategy module. strategies.py aggregates this the same way it aggregates
+# STRATEGY_META/STRATEGY_REGISTRY, so this is always present.
+AVAILABLE_STRATEGY_EXITS = strategies.STRATEGY_EXITS
 
 
 # ── Modules (code-organization refactor — see modules/ folder) ─────
@@ -1238,8 +1215,6 @@ class PaperTradingEngine:
     MIN_VOL_SURGE = 1.3
     COUNTER_TREND_SCORE_BOOST = 15.0
     MIN_HTF_ALIGN_SCORE = 42.0
-    RISK_PER_TRADE_PCT = 0.01
-    ATR_SL_MULTIPLIER = 1.5
     SECTOR_BIAS_SCORE = 6.0
     SECTOR_BIAS_TTL = 300
     DIAG_LOG_COOLDOWN_SECONDS = 300
@@ -1740,89 +1715,32 @@ class PaperTradingEngine:
         return None, None
     
     def _update_trailing_stop(self, pos, ltp, current_move_pct, mins):
-        side = pos['side']
+        """
+        Deliberately does NOT touch pos['target'] / pos['stoploss'].
+
+        Per product requirement: target/SL are whatever the user configured
+        in Settings (target_pct / stoploss_pct, e.g. "4% target / 2% SL"),
+        set once at entry in _open_position_nolock / BacktestEngine, and a
+        position must exit at exactly that price level — no ATR trailing,
+        no breakeven-lock, no "tighten as it moves further into profit", and
+        no EOD stoploss-squeeze. All of those used to silently move the SL
+        away from the configured percentage (sometimes within one bar of
+        opening the trade), which is exactly why exits stopped matching the
+        Target %/Stop Loss % shown in Settings/Backtest.
+
+        The only thing this still does is track peak_price, kept purely for
+        display/diagnostics (e.g. a future "max favorable excursion" stat) —
+        it is not read by any exit-decision code.
+        """
         entry = pos['entry_price']
-        updated = False
-        atr = pos.get('entry_atr')
-        # NOTE: this used to run unconditionally on every bar, including the
-        # very first one checked right after entry — when peak_price still
-        # equals entry (zero price movement yet). new_sl = entry ± 1.5*ATR
-        # is, for any low/medium-ATR stock, tighter than a normal 3-5%
-        # configured Stop Loss, so it silently overwrote the user's
-        # configured SL within one bar of opening the position — before the
-        # trade had even had a chance to move in its favor. A *trailing*
-        # stop should only ever tighten once the position is in profit
-        # (peak has advanced past entry), same as the breakeven-lock/
-        # tighten blocks just below this one, which are correctly gated by
-        # current_move_pct. Gating this block the same way means the
-        # configured target_pct/stoploss_pct set at entry actually holds
-        # until the trade is genuinely in profit, instead of being replaced
-        # almost immediately regardless of what the user configured.
-        if atr and atr > 0 and current_move_pct > 0:
-            peak_price = pos.get('peak_price', entry)
-            if side == 'BUY':
-                new_sl = round(peak_price - 1.5 * atr, 2)
-                if new_sl > pos.get('stoploss', 0):
-                    pos['stoploss'] = new_sl
-                    updated = True
-                    logger.info(f"ATR trail LONG {entry:.2f} -> SL {new_sl:.2f} (peak {peak_price:.2f})")
-            else:
-                new_sl = round(peak_price + 1.5 * atr, 2)
-                if new_sl < pos.get('stoploss', float('inf')):
-                    pos['stoploss'] = new_sl
-                    updated = True
-                    logger.info(f"ATR trail SHORT {entry:.2f} -> SL {new_sl:.2f} (peak {peak_price:.2f})")
-        if current_move_pct >= 0.3:
-            if not pos.get('trail_activated', False):
-                pos['trail_activated'] = True
-                if side == 'BUY':
-                    new_sl = round(entry * 1.001, 2)
-                    if new_sl > pos.get('stoploss', 0):
-                        pos['stoploss'] = new_sl
-                        updated = True
-                        logger.info(f"Trail activated LONG {entry:.2f} -> SL {new_sl:.2f}")
-                else:
-                    new_sl = round(entry * 0.999, 2)
-                    if new_sl < pos.get('stoploss', float('inf')):
-                        pos['stoploss'] = new_sl
-                        updated = True
-                        logger.info(f"Trail activated SHORT {entry:.2f} -> SL {new_sl:.2f}")
-            if current_move_pct >= 1.0:
-                if side == 'BUY':
-                    candidate = max(round(entry * 1.003, 2), round(ltp * 0.995, 2))
-                    if candidate > pos.get('stoploss', 0):
-                        pos['stoploss'] = candidate
-                        updated = True
-                        logger.info(f"Trail tightened LONG -> SL {candidate:.2f} (ltp={ltp:.2f})")
-                else:
-                    candidate = min(round(entry * 0.997, 2), round(ltp * 1.005, 2))
-                    if candidate < pos.get('stoploss', float('inf')):
-                        pos['stoploss'] = candidate
-                        updated = True
-                        logger.info(f"Trail tightened SHORT -> SL {candidate:.2f} (ltp={ltp:.2f})")
-        # EOD stop-loss tightening only makes sense for INTRADAY (MIS)
-        # positions that must be squared off by 15:15 — squeezing the SL
-        # toward LTP at 14:30 on a DELIVERY/CNC position would force it
-        # closed the same day it was opened, which is exactly the
-        # intraday-style forced-exit behavior CNC must not have.
-        if self.trading_mode == 'INTRADAY' and mins >= 870:
-            if side == 'BUY':
-                eod_sl = round(ltp * 0.998, 2)
-                if eod_sl > pos.get('stoploss', 0):
-                    pos['stoploss'] = eod_sl
-                    updated = True
-            else:
-                eod_sl = round(ltp * 1.002, 2)
-                if eod_sl < pos.get('stoploss', float('inf')):
-                    pos['stoploss'] = eod_sl
-                    updated = True
+        side = pos['side']
         if side == 'BUY':
             if ltp > pos.get('peak_price', entry):
                 pos['peak_price'] = ltp
         else:
             if ltp < pos.get('peak_price', entry):
                 pos['peak_price'] = ltp
-        return updated
+        return False
     
     def _get_actual_margin(self, symbol, price, side="BUY"):
         now = time.time()
@@ -1889,7 +1807,7 @@ class PaperTradingEngine:
         )
         return margin_per_share, margin_pct, "fallback"
     
-    def _smart_allocation_time_based(self, price, signal_time, symbol=None, side='BUY', atr=None):
+    def _smart_allocation_time_based(self, price, signal_time, symbol=None, side='BUY'):
         wallet = self.data['wallet']
         usable = wallet * self.WALLET_USAGE_PCT
         if symbol:
@@ -1903,23 +1821,9 @@ class PaperTradingEngine:
 
         margin_qty = int(usable // margin_per_share)
 
-        # NOTE: ATR-based risk-per-trade sizing used to be able to cap qty
-        # well below the 80%-wallet margin cap (e.g. on low-ATR stocks,
-        # 1% of wallet ÷ small SL distance could be far fewer shares than
-        # the wallet could otherwise afford). Per product decision, sizing
-        # now always uses the full 80%-of-wallet margin cap; ATR still
-        # drives the target/stoploss *price levels* elsewhere, just not qty.
+        # Sizing always uses the full 80%-of-wallet margin cap. No ATR or
+        # risk-per-trade calculation is involved in quantity at all.
         qty = margin_qty
-        if atr and atr > 0:
-            risk_amount = wallet * self.RISK_PER_TRADE_PCT
-            sl_distance = atr * self.ATR_SL_MULTIPLIER
-            if sl_distance > 0:
-                risk_qty = int(risk_amount / sl_distance)
-                logger.info(
-                    f"Sizing [{symbol}]: margin_cap={margin_qty} (80% wallet) "
-                    f"| risk_qty would have been {risk_qty} (ATR-based, no longer applied) "
-                    f"| final={qty}"
-                )
 
         if qty < 1:
             return 0, 0.0, margin_pct, source
@@ -1970,26 +1874,15 @@ class PaperTradingEngine:
             else:
                 return round(ltp * (1 - self.SLIPPAGE_PCT), 2), self.SLIPPAGE_PCT * 100
 
-    def _calculate_atr_targets(self, price, atr, side):
+    def _calculate_atr_targets(self, price, side):
         # target_pct / stoploss_pct / max_target_pct / max_sl_pct are set in
         # __init__ from the user's Settings (per trading mode), not fixed
-        # constants — see UserManager.get_user_risk_config().
-        #
-        # NOTE: this used to branch on atr_pct and — for the very common
-        # case of a low-volatility bar (atr_pct < 0.5%) — silently SHRINK
-        # the user's configured target/SL down to 0.5x/0.6x of what they
-        # asked for (e.g. a configured 1%/5% quietly became ~0.5%/~3%, and
-        # for higher-priced/low-vol names atr_pct%<0.5 was the norm, not
-        # the exception). That meant "Target %" / "Stop Loss %" in
-        # Settings/Backtest almost never matched the actual target/SL a
-        # position opened with, and stops far tighter than configured got
-        # hit by ordinary noise within minutes. `atr` is intentionally
-        # unused now — kept as a parameter only so callers don't need to
-        # change — target/SL are always exactly the configured percentages,
-        # with max_target_pct/max_sl_pct still acting as a hard outer
-        # ceiling (never a reason to shrink, only ever to cap runaway
-        # widening, which can't happen here since it's no longer computed
-        # from ATR at all).
+        # constants — see UserManager.get_user_risk_config(). No ATR is
+        # involved anywhere in this calculation: target/SL are always
+        # exactly the configured percentages. max_target_pct/max_sl_pct
+        # exist only as a hard outer ceiling in case of a pathological
+        # price/percent combination — they never shrink the configured
+        # values, only cap runaway widening.
         if side == 'BUY':
             tgt = round(price * (1.0 + self.target_pct), 2)
             sl = round(price * (1.0 - self.stoploss_pct), 2)
@@ -2163,6 +2056,11 @@ class PaperTradingEngine:
     def _open_position_nolock(self, symbol, side, price, reason='SIGNAL',
                              signal_score=None, strategy_name=None, atr=None,
                              df=None, ind=None, log_entry=None):
+        # NOTE: `atr` is accepted for call-site compatibility (callers still
+        # compute it for other purposes, e.g. _check_entry_quality's VWAP
+        # extension checks) but is NOT used here — target/SL sizing below
+        # comes entirely from _calculate_atr_targets(), which is purely
+        # target_pct/stoploss_pct based. No ATR anywhere in entry sizing.
         def _block(msg):
             logger.info(f"BLOCKED {symbol}: {msg}")
             if log_entry is not None:
@@ -2215,7 +2113,7 @@ class PaperTradingEngine:
         # signal filter — it's order mechanics (circuit breaker, capital
         # sizing, trading-mode/session-window rules) needed to actually
         # place a real order, and stays regardless of which strategy fired.
-        qty, margin_used, margin_pct, margin_source = self._smart_allocation_time_based(price, now, symbol=symbol, side=side, atr=atr)
+        qty, margin_used, margin_pct, margin_source = self._smart_allocation_time_based(price, now, symbol=symbol, side=side)
         if qty == 0:
             wallet = self.data['wallet']
             usable = wallet * self.WALLET_USAGE_PCT
@@ -2229,15 +2127,9 @@ class PaperTradingEngine:
                 reduction = 0.25 if (12*60+30 < slot_m < 14*60+0) else (0.75 if (14*60+0 <= slot_m <= 15*60+30) else 1.0)
                 _block(f"Qty reduced to 0 by slot factor {reduction*100:.0f}% [{_slot_label(slot_m)}]")
             return None
-        if atr and atr > 0:
-            target, stoploss = self._calculate_atr_targets(price, atr, side)
-        else:
-            if side == 'BUY':
-                target = round(price * (1 + self.target_pct), 2)
-                stoploss = round(price * (1 - self.stoploss_pct), 2)
-            else:
-                target = round(price * (1 - self.target_pct), 2)
-                stoploss = round(price * (1 + self.stoploss_pct), 2)
+        # Target/SL are always exactly the user-configured target_pct/
+        # stoploss_pct — no ATR involved at all (see _calculate_atr_targets).
+        target, stoploss = self._calculate_atr_targets(price, side)
         if side == 'BUY':
             target = max(target, price + self.MIN_ABSOLUTE_MOVE)
             stoploss = min(stoploss, price - self.MIN_ABSOLUTE_MOVE)
@@ -2267,8 +2159,6 @@ class PaperTradingEngine:
             'strategy': strategy_name,
             'target': target,
             'stoploss': stoploss,
-            'entry_atr': atr,
-            'trail_activated': False,
             'peak_price': price,
             'margin_pct': margin_pct,
             'leverage': round(1 / margin_pct, 2) if margin_pct > 0 else 5.0,
@@ -3766,35 +3656,15 @@ class BacktestEngine:
                 best_strategy = "VOTE_SIGNAL"
 
             price = ltp
-            atr = float(ind_slice['atr'].iloc[-1]) if 'atr' in ind_slice.columns else None
-
-            if atr and atr > 0:
-                target, stoploss = self._calculate_atr_targets(price, atr, side)
-            elif side == 'BUY':
-                target = price * (1 + self.target_pct)
-                stoploss = price * (1 - self.stoploss_pct)
-            else:
-                target = price * (1 - self.target_pct)
-                stoploss = price * (1 + self.stoploss_pct)
+            # Target/SL are always exactly the configured target_pct/
+            # stoploss_pct — no ATR involved anywhere in this calculation.
+            target, stoploss = self._calculate_atr_targets(price, side)
 
             margin_per_share = price * margin_pct
             qty = int((wallet * 0.8) / margin_per_share) if margin_per_share > 0 else 0
 
-            # ATR-based risk sizing no longer caps qty — mirrors live's
-            # _smart_allocation_time_based(), which now always sizes to the
-            # full 80%-of-wallet margin cap. ATR still sets target/stoploss
-            # price levels elsewhere; it just doesn't cut quantity anymore.
-            if atr and atr > 0 and qty > 0:
-                risk_amount = wallet * PaperTradingEngine.RISK_PER_TRADE_PCT
-                sl_distance = atr * PaperTradingEngine.ATR_SL_MULTIPLIER
-                if sl_distance > 0:
-                    risk_qty = int(risk_amount / sl_distance)
-                    logger.debug(
-                        f"  {sym} {side} sizing: margin_cap={qty} (80% wallet) "
-                        f"| risk_qty would have been {risk_qty} (ATR-based, no longer applied)"
-                    )
-
-            
+            # Sizing always uses the full 80%-of-wallet margin cap. No ATR
+            # or risk-per-trade calculation is involved in quantity at all.
             if qty <= 0:
                 logger.debug(f"  {sym} {side} signal but qty=0 (wallet={wallet:.2f}, margin_per_share={margin_per_share:.2f})")
                 continue
@@ -3821,12 +3691,7 @@ class BacktestEngine:
                 'entry_time': bar_time,
                 'entry_date': bar_dt.date(),
                 'strategy': best_strategy,
-                # v10: needed by PaperTradingEngine._update_trailing_stop, which
-                # backtest now calls each bar to mirror live's trailing-SL
-                # behavior (breakeven-lock at +0.3%, tighten at +1%, ATR trail).
-                'trail_activated': False,
                 'peak_price': fill_price,
-                'entry_atr': atr if (atr and atr > 0) else None,
             }
             wallet -= fill_price * qty * margin_pct
             logger.info(
@@ -4011,23 +3876,11 @@ class BacktestEngine:
         else:
             return round(price * (1.0 - PaperTradingEngine.SLIPPAGE_PCT), 2)
 
-    def _calculate_atr_targets(self, price, atr, side):
-        # Exact port of PaperTradingEngine._calculate_atr_targets — same
-        # 3-tier atr_pct branching (high-vol / low-vol / normal) and the
-        # same hard min/max caps via self.max_target_pct/self.max_sl_pct.
-        # The previous version here used an unrelated linear-scaling
-        # formula that didn't reproduce live's target/SL levels at all.
-        # NOTE: this used to branch on atr_pct and, for atr_pct < 0.5%
-        # (the common case for higher-priced/lower-volatility names on a
-        # 3-min chart), silently shrink the requested target/SL to
-        # 0.5x/0.6x of the Backtest form's Target %/Stop Loss % — so a
-        # configured 1%/5% could actually open trades at ~0.5%/~3%, or
-        # tighter, with no indication in the UI that the override wasn't
-        # being honored. `atr` is intentionally unused now (kept as a
-        # parameter for call-site compatibility) — target/SL are always
-        # exactly the configured percentages, with max_target_pct/
-        # max_sl_pct still acting as a hard outer ceiling only (nothing
-        # here can trigger widening past it anymore).
+    def _calculate_atr_targets(self, price, side):
+        # Exact mirror of PaperTradingEngine._calculate_atr_targets — no ATR
+        # anywhere in this calculation. Target/SL are always exactly the
+        # configured target_pct/stoploss_pct, with max_target_pct/max_sl_pct
+        # acting only as a hard outer ceiling (never a reason to shrink).
         if side == 'BUY':
             tgt = round(price * (1.0 + self.target_pct), 2)
             sl = round(price * (1.0 - self.stoploss_pct), 2)
