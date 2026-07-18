@@ -1,4 +1,4 @@
-# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v2
+# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v3
 #
 # Setup:
 #   1. Mark the HIGH and LOW of the first 3-minute candle of the day
@@ -14,8 +14,12 @@
 #        GREEN (close > open).
 #      - SELL requires BOTH the 1st candle and the breakout candle to be
 #        RED (close < open).
+#      - VOLUME: the breakout candle's volume must be STRICTLY GREATER
+#        than the 1st candle's volume, for both BUY and SELL. A breakout
+#        on volume that's lower than (or equal to) the opening candle is
+#        treated as unconfirmed/likely noise and no signal fires.
 #
-# No EMA/RSI/volume/ATR filters — deliberately minimal.
+# No EMA/RSI/ATR filters — deliberately minimal.
 #
 # SL/Target: this strategy does NOT define its own SL/Target logic.
 # The scanner's flat target_pct / stoploss_pct (Settings → Target & Stop
@@ -92,7 +96,7 @@ def _within_monitor_window(df, last_idx):
 def _orb_signal(df, want_bullish):
     if len(df) < 2:
         return False
-    required_cols = ('open', 'high', 'low', 'close')
+    required_cols = ('open', 'high', 'low', 'close', 'volume')
     if not all(c in df.columns for c in required_cols):
         return False
 
@@ -115,7 +119,16 @@ def _orb_signal(df, want_bullish):
         first_high = float(first_candle['high'])
         first_low = float(first_candle['low'])
         breakout_close = float(breakout_candle['close'])
+        first_volume = float(first_candle['volume'])
+        breakout_volume = float(breakout_candle['volume'])
     except Exception:
+        return False
+
+    # Volume confirmation: the candle doing the breaking must trade with
+    # more volume than the first (opening-range) candle — a breakout on
+    # thin volume is far more likely to be noise/a false break than a
+    # genuine move. Applies to both BUY and SELL.
+    if breakout_volume <= first_volume:
         return False
 
     if want_bullish:
@@ -136,10 +149,13 @@ def orb_buy(df, ind=None):
             sym = df.iloc[-1].get('symbol', '?') if 'symbol' in df.columns else '?'
             session_start = _session_start_idx(df)
             first_high = float(df.iloc[session_start]['high'])
+            first_vol = float(df.iloc[session_start]['volume'])
             close_now = float(df['close'].iloc[-1])
+            vol_now = float(df['volume'].iloc[-1])
             logger.info(
                 f"ORB_BUY: {sym} broke first-candle high={first_high:.2f} "
-                f"with close={close_now:.2f}"
+                f"with close={close_now:.2f}, volume={vol_now:.0f} "
+                f"(1st candle volume={first_vol:.0f})"
             )
         return bool(signal)
     except Exception as e:
@@ -154,10 +170,13 @@ def orb_sell(df, ind=None):
             sym = df.iloc[-1].get('symbol', '?') if 'symbol' in df.columns else '?'
             session_start = _session_start_idx(df)
             first_low = float(df.iloc[session_start]['low'])
+            first_vol = float(df.iloc[session_start]['volume'])
             close_now = float(df['close'].iloc[-1])
+            vol_now = float(df['volume'].iloc[-1])
             logger.info(
                 f"ORB_SELL: {sym} broke first-candle low={first_low:.2f} "
-                f"with close={close_now:.2f}"
+                f"with close={close_now:.2f}, volume={vol_now:.0f} "
+                f"(1st candle volume={first_vol:.0f})"
             )
         return bool(signal)
     except Exception as e:
