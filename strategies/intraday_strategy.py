@@ -1,4 +1,4 @@
-# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v3
+# intraday_strategy.py — Simple First-Candle Opening Range Breakout (ORB) v4
 #
 # Setup:
 #   1. Mark the HIGH and LOW of the first 3-minute candle of the day
@@ -18,6 +18,19 @@
 #        than the 1st candle's volume, for both BUY and SELL. A breakout
 #        on volume that's lower than (or equal to) the opening candle is
 #        treated as unconfirmed/likely noise and no signal fires.
+#      - RANGE CAP: the breakout candle's own full range (high - low),
+#        as a % of its close, must NOT exceed MAX_BREAKOUT_RANGE_PCT
+#        (0.5% by default). A candle wider than this is treated as a
+#        spike/outlier print rather than a genuine breakout, and no
+#        signal fires.
+#      - ANTI-CHASE CAP: how far price has ALREADY moved from the day's
+#        OPEN (not the first candle's high/low — the actual 09:15 open
+#        print) by the time the breakout candle closes must not exceed
+#        MAX_EXTENSION_FROM_OPEN_PCT (0.75% by default). e.g. if the
+#        stock opened at 10475 and has already run 1-2% by the time a
+#        "breakout" triggers, most of the move is likely already spent
+#        and the odds of a reversal/pullback from here are much higher
+#        than taking a fresh breakout — so no signal fires.
 #
 # No EMA/RSI/ATR filters — deliberately minimal.
 #
@@ -53,6 +66,22 @@ TIMEFRAME = "3minute"
 # the 13:00 cutoff.)
 MONITOR_CUTOFF_TIME = "13:00"  # HH:MM, 24h — no NEW ORB signal after this time
 MIN_BARS_REQUIRED = 5
+
+# Sanity cap on the breakout candle itself: its full range (high - low),
+# as a percentage of its own close price, must not exceed this. Guards
+# against firing on a single wild/outlier candle (a spike, a fat-finger
+# print, a news-driven gap-through) where the "breakout" is really just
+# noise/volatility rather than a controlled directional move.
+MAX_BREAKOUT_RANGE_PCT = 0.5  # percent, e.g. 0.5 = 0.5%
+
+# Anti-chase cap: how far price is allowed to have already moved from the
+# DAY'S OPEN (the first candle's open) by the time the breakout candle
+# closes. If price has already run further than this in the breakout's
+# direction, the move is considered "already extended" — most of the
+# room has likely been used up and the odds of a pullback/reversal from
+# here are much higher than taking a fresh breakout. No signal fires in
+# that case, even if every other condition (color/volume/range) is met.
+MAX_EXTENSION_FROM_OPEN_PCT = 0.75  # percent, e.g. 0.75 = 0.75%
 
 # ----------------------------------------------------------------------------
 
@@ -118,7 +147,10 @@ def _orb_signal(df, want_bullish):
     try:
         first_high = float(first_candle['high'])
         first_low = float(first_candle['low'])
+        first_open = float(first_candle['open'])
         breakout_close = float(breakout_candle['close'])
+        breakout_high = float(breakout_candle['high'])
+        breakout_low = float(breakout_candle['low'])
         first_volume = float(first_candle['volume'])
         breakout_volume = float(breakout_candle['volume'])
     except Exception:
@@ -129,6 +161,30 @@ def _orb_signal(df, want_bullish):
     # thin volume is far more likely to be noise/a false break than a
     # genuine move. Applies to both BUY and SELL.
     if breakout_volume <= first_volume:
+        return False
+
+    # Range sanity check: reject the breakout candle if its own full
+    # range (high - low) is unusually wide relative to its price — this
+    # is a single-candle spike/outlier, not a controlled breakout, and
+    # tends to mean-revert or represent a bad/thin print rather than a
+    # genuine move worth following.
+    if breakout_close <= 0:
+        return False
+    breakout_range_pct = (breakout_high - breakout_low) / breakout_close * 100
+    if breakout_range_pct > MAX_BREAKOUT_RANGE_PCT:
+        return False
+
+    # Anti-chase check: how far has price already run from the DAY'S
+    # OPEN by the time this breakout candle closes? e.g. stock opens at
+    # 10475 and by the breakout candle's close it's already 1-2% away —
+    # most of the move is likely already used up, and odds of a
+    # pullback/reversal from here are meaningfully higher than taking a
+    # fresh breakout. If the extension exceeds the cap, skip the signal
+    # even though every other condition was met.
+    if first_open <= 0:
+        return False
+    extension_pct = (breakout_close - first_open) / first_open * 100
+    if abs(extension_pct) > MAX_EXTENSION_FROM_OPEN_PCT:
         return False
 
     if want_bullish:
@@ -149,13 +205,19 @@ def orb_buy(df, ind=None):
             sym = df.iloc[-1].get('symbol', '?') if 'symbol' in df.columns else '?'
             session_start = _session_start_idx(df)
             first_high = float(df.iloc[session_start]['high'])
+            first_open = float(df.iloc[session_start]['open'])
             first_vol = float(df.iloc[session_start]['volume'])
             close_now = float(df['close'].iloc[-1])
             vol_now = float(df['volume'].iloc[-1])
+            high_now = float(df['high'].iloc[-1])
+            low_now = float(df['low'].iloc[-1])
+            range_pct = (high_now - low_now) / close_now * 100 if close_now else 0.0
+            ext_pct = (close_now - first_open) / first_open * 100 if first_open else 0.0
             logger.info(
                 f"ORB_BUY: {sym} broke first-candle high={first_high:.2f} "
                 f"with close={close_now:.2f}, volume={vol_now:.0f} "
-                f"(1st candle volume={first_vol:.0f})"
+                f"(1st candle volume={first_vol:.0f}), range={range_pct:.2f}%, "
+                f"extension_from_open={ext_pct:.2f}%"
             )
         return bool(signal)
     except Exception as e:
@@ -170,13 +232,19 @@ def orb_sell(df, ind=None):
             sym = df.iloc[-1].get('symbol', '?') if 'symbol' in df.columns else '?'
             session_start = _session_start_idx(df)
             first_low = float(df.iloc[session_start]['low'])
+            first_open = float(df.iloc[session_start]['open'])
             first_vol = float(df.iloc[session_start]['volume'])
             close_now = float(df['close'].iloc[-1])
             vol_now = float(df['volume'].iloc[-1])
+            high_now = float(df['high'].iloc[-1])
+            low_now = float(df['low'].iloc[-1])
+            range_pct = (high_now - low_now) / close_now * 100 if close_now else 0.0
+            ext_pct = (close_now - first_open) / first_open * 100 if first_open else 0.0
             logger.info(
                 f"ORB_SELL: {sym} broke first-candle low={first_low:.2f} "
                 f"with close={close_now:.2f}, volume={vol_now:.0f} "
-                f"(1st candle volume={first_vol:.0f})"
+                f"(1st candle volume={first_vol:.0f}), range={range_pct:.2f}%, "
+                f"extension_from_open={ext_pct:.2f}%"
             )
         return bool(signal)
     except Exception as e:
