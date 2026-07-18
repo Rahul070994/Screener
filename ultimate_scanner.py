@@ -3352,6 +3352,20 @@ class BacktestEngine:
         last_exit_time = {}
         last_exit_reason = {}
         max_open_pos = PaperTradingEngine.MAX_OPEN_POS
+        # Entry timing model: a signal confirmed on bar `i` (the breakout
+        # candle's close) is NOT filled on that same bar. It's queued here
+        # and filled on bar i+1 — the candle that forms immediately after
+        # the breakout candle — using that next candle's OPEN as the
+        # "current price at the time" (the earliest tick available for a
+        # candle that hasn't closed yet in a live feed). This mirrors what
+        # live trading already does in practice: by the time a signal is
+        # detected and a fresh LTP is fetched, the next candle has already
+        # started forming, so the live fill is naturally a next-candle
+        # price, never the breakout candle's own close. If the immediate
+        # next bar for that symbol isn't bar i+1 (e.g. data ends, or it
+        # rolls to a new day), the queued entry is dropped rather than
+        # filled late or on stale data.
+        pending_entries = {}
 
         def _release(pos_sym, position, exit_price, reason, close_time):
             t = self._close_trade(pos_sym, position, exit_price, reason, close_time)
@@ -3517,6 +3531,65 @@ class BacktestEngine:
             except Exception:
                 bar_dt = datetime.now()
                 bar_mins = 0
+
+            # Fill any pending entry queued from the PREVIOUS bar (the
+            # breakout candle) using THIS bar's OPEN as the entry
+            # reference price — i.e. the earliest available price of the
+            # candle that forms right after the breakout candle, not the
+            # breakout candle's own close. Only fires if this bar is
+            # exactly the very next bar after the signal bar and on the
+            # same trading day; otherwise the signal is stale and dropped
+            # (mirrors live: if you miss the next candle, the setup is
+            # gone, you don't chase it later).
+            _pending = pending_entries.pop(sym, None)
+            if _pending is not None:
+                same_day = bar_dt.date() == _pending['signal_date']
+                is_immediate_next_bar = i == _pending['signal_i'] + 1
+                if same_day and is_immediate_next_bar and len(positions) < max_open_pos:
+                    _side = _pending['side']
+                    _next_open = float(current_bar['open'])
+                    _target, _stoploss = self._calculate_atr_targets(_next_open, _side)
+                    _margin_per_share = _next_open * margin_pct
+                    _qty = int((wallet * 0.8) / _margin_per_share) if _margin_per_share > 0 else 0
+                    if _qty > 0:
+                        _fill_price = self._slip(_next_open, _side)
+                        if _side == 'BUY':
+                            _fill_price = min(_fill_price, round(bar_high, 2))
+                        else:
+                            _fill_price = max(_fill_price, round(bar_low, 2))
+                        positions[sym] = {
+                            'side': _side,
+                            'entry_price': _fill_price,
+                            'qty': _qty,
+                            'target': _target,
+                            'stoploss': _stoploss,
+                            'entry_time': bar_time,
+                            'entry_date': bar_dt.date(),
+                            'strategy': _pending['strategy'],
+                            'peak_price': _fill_price,
+                        }
+                        wallet -= _fill_price * _qty * margin_pct
+                        logger.info(
+                            f"BACKTEST {_side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
+                            f"(next-candle entry; signal bar close triggered prior candle)  "
+                            f"open={_next_open:.2f} fill={_fill_price:.2f}  qty={_qty}  "
+                            f"strategy={_pending['strategy']}  target={_target:.2f}  sl={_stoploss:.2f}  "
+                            f"open_positions={len(positions)}/{max_open_pos}"
+                        )
+                    # else: sized to zero, drop silently (matches existing
+                    # qty<=0 handling elsewhere in this loop)
+                else:
+                    logger.debug(
+                        f"  {sym} pending {_pending['side']} signal from bar {_pending['signal_i']} "
+                        f"dropped — next bar unavailable/not immediate or max_open_pos reached"
+                    )
+                # Whether filled or dropped, this bar was "consumed" by the
+                # pending-entry check — still fall through to normal
+                # exit-management / new-signal logic below for this same
+                # bar, since a freshly-opened position still needs to be
+                # tracked in `positions` on subsequent bars (not this one),
+                # and if nothing filled, this bar is free to generate a
+                # brand new signal of its own.
 
             if sym in positions:
                 pos = positions[sym]
@@ -3703,48 +3776,24 @@ class BacktestEngine:
             if not best_strategy:
                 best_strategy = "VOTE_SIGNAL"
 
-            price = ltp
-            # Target/SL are always exactly the configured target_pct/
-            # stoploss_pct — no ATR involved anywhere in this calculation.
-            target, stoploss = self._calculate_atr_targets(price, side)
-
-            margin_per_share = price * margin_pct
-            qty = int((wallet * 0.8) / margin_per_share) if margin_per_share > 0 else 0
-
-            # Sizing always uses the full 80%-of-wallet margin cap. No ATR
-            # or risk-per-trade calculation is involved in quantity at all.
-            if qty <= 0:
-                logger.debug(f"  {sym} {side} signal but qty=0 (wallet={wallet:.2f}, margin_per_share={margin_per_share:.2f})")
-                continue
-
-            # Slippage-adjusted fill — mirrors live's
-            # _get_l2_execution_price()/SLIPPAGE_PCT: a BUY pays slightly
-            # above the reference price, a SELL receives slightly below it.
-            # target/stoploss/sizing above stay on the raw reference price
-            # (same basis live uses), only the recorded entry_price/wallet
-            # debit use the slipped fill — matching live's
-            # _open_position_nolock exactly.
-            fill_price = self._slip(price, side)
-            if side == 'BUY':
-                fill_price = min(fill_price, round(bar_high, 2))
-            else:
-                fill_price = max(fill_price, round(bar_low, 2))
-
-            positions[sym] = {
+            # Do NOT fill on this bar. This bar (i) is the breakout candle
+            # — its close is what confirmed the signal, but that close
+            # price is already "in the past" by the time an order could
+            # realistically be placed. Queue the signal and fill it on the
+            # very next bar's OPEN instead (see the pending_entries check
+            # near the top of this loop). Sizing/target/stoploss are
+            # deliberately NOT computed here — they depend on the actual
+            # fill price, which isn't known until the next candle opens.
+            pending_entries[sym] = {
                 'side': side,
-                'entry_price': fill_price,
-                'qty': qty,
-                'target': target,
-                'stoploss': stoploss,
-                'entry_time': bar_time,
-                'entry_date': bar_dt.date(),
                 'strategy': best_strategy,
-                'peak_price': fill_price,
+                'signal_i': i,
+                'signal_date': bar_dt.date(),
             }
-            wallet -= fill_price * qty * margin_pct
-            logger.info(
-                f"BACKTEST {side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  price={price:.2f} fill={fill_price:.2f}  qty={qty}  "
-                f"strategy={best_strategy}  b={b:.1f}  s={s:.1f}  target={target:.2f}  sl={stoploss:.2f}  open={len(positions)}/{max_open_pos}"
+            logger.debug(
+                f"  {sym} {side} signal on breakout candle @ {bar_dt.strftime('%Y-%m-%d %H:%M')} "
+                f"(close={ltp:.2f}) — queued for fill on next candle's open  "
+                f"strategy={best_strategy}  b={b:.1f}  s={s:.1f}"
             )
 
         for sym, pos in list(positions.items()):
