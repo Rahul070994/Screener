@@ -1036,6 +1036,73 @@ KITE_INTERVAL_MAX_DAYS = {
 }
 
 
+# Interval string -> candle length in minutes. Used by
+# _drop_forming_candle() below to work out whether the LAST candle
+# returned by historical_data() has actually finished yet.
+KITE_INTERVAL_MINUTES = {
+    'minute': 1,
+    '3minute': 3,
+    '5minute': 5,
+    '10minute': 10,
+    '15minute': 15,
+    '30minute': 30,
+    '60minute': 60,
+    'day': 24 * 60,
+}
+
+
+def _drop_forming_candle(data, interval, now):
+    """Strip the trailing candle from `data` if its period hasn't fully
+    elapsed yet as of `now`.
+
+    kite.historical_data() is documented to include the CURRENTLY-FORMING
+    candle whenever `to_date` is at or near the current moment — its OHLC
+    is just a snapshot of whatever ticks have arrived so far and keeps
+    changing until the candle's period actually ends. Every strategy in
+    this project (see e.g. intraday_strategy.py's ORB logic) is written
+    assuming every row it's handed is a CLOSED candle — evaluating a
+    breakout against a still-forming candle is a look-ahead bug: it lets
+    signals fire seconds into a new candle instead of waiting for that
+    candle to actually close, using a "close" that is really just the
+    live LTP at query time, not a real close.
+
+    This must be called on every historical_data()/_fetch_historical_chunked()
+    result before it's handed to indicators/strategies, in BOTH the
+    live scanner and the backtest engine — a same-day backtest (to_date at
+    or near now) hits the exact same contamination as live trading.
+
+    `data` is the raw list of dicts kite.historical_data() returns
+    (each with a 'date' key). `now` should be tz-aware IST if the
+    candle timestamps are tz-aware (Kite's normally are).
+    """
+    if not data:
+        return data
+    interval_minutes = KITE_INTERVAL_MINUTES.get(interval)
+    if not interval_minutes:
+        # Unknown interval string — nothing we can safely check, leave as-is.
+        return data
+    try:
+        last_start = pd.to_datetime(data[-1].get('date'))
+    except Exception:
+        return data
+    try:
+        if last_start.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=last_start.tzinfo)
+        elif last_start.tzinfo is None and now.tzinfo is not None:
+            last_start = last_start.tz_localize(now.tzinfo)
+    except Exception:
+        pass
+    try:
+        candle_close_time = last_start + timedelta(minutes=interval_minutes)
+        if candle_close_time > now:
+            # Trailing candle hasn't closed yet — drop it. (Slice, don't
+            # mutate the caller's list.)
+            return data[:-1]
+    except Exception:
+        return data
+    return data
+
+
 def _chunk_date_range(start, end, max_days):
     """Split [start, end] into consecutive sub-ranges each <= max_days,
     so a single historical_data() call never exceeds Kite's per-interval
@@ -1211,7 +1278,6 @@ class PaperTradingEngine:
     # entries can start from 9:18 instead of 9:30.
     NEW_ENTRY_WARMUP_MINUTES = 3
     MIN_SIGNAL_SCORE = 35.0
-    MIN_VOTE_PCT = 50.0
     MIN_VOL_SURGE = 1.3
     COUNTER_TREND_SCORE_BOOST = 15.0
     MIN_HTF_ALIGN_SCORE = 42.0
@@ -2410,6 +2476,14 @@ class PaperTradingEngine:
                 now,
                 strat_timeframe,
             )
+            # kite.historical_data() can include the still-FORMING current
+            # candle when to_date is ~now — its OHLC is just a snapshot of
+            # whatever ticks have arrived so far, not a real close. Strip
+            # it so strategies (e.g. ORB) never evaluate a breakout against
+            # a candle that hasn't actually finished yet. Without this, a
+            # signal can fire seconds into a brand-new candle instead of
+            # waiting for it to close 3(or N) minutes later.
+            data5 = _drop_forming_candle(data5, strat_timeframe, now)
             if not data5 or len(data5) < min_bars_needed:
                 self._log_diag(
                     f"{symbol}:insufficient_data",
@@ -2476,33 +2550,6 @@ class PaperTradingEngine:
             s5_buy_pct = strat5_b / st5_total * 100 if st5_total > 0 else 50.0
             s5_sel_pct = strat5_s / st5_total * 100 if st5_total > 0 else 50.0
 
-            htf15_buy_pct = 50.0
-            htf15_sel_pct = 50.0
-            htf15_ok_buy = False
-            htf15_ok_sell = False
-
-            try:
-                _hist_limiter.wait(f"15min signal {symbol}")
-                data15 = kite.historical_data(
-                    SYMBOL_MAP[symbol]["token"],
-                    now - timedelta(days=14),
-                    now,
-                    "15minute",
-                )
-                if data15 and len(data15) >= min_bars_needed:
-                    df15 = pd.DataFrame(data15)
-                    ind15 = Indicators.calculate_all(df15)
-                    df15_w = df15.iloc[-min_bars_needed:].reset_index(drop=True)
-                    ind15_w = ind15.iloc[-min_bars_needed:].reset_index(drop=True)
-                    b15, s15, _ = _strat_votes(df15_w, ind15_w, self.strategies_dict, self.strategy_performance)
-                    t15 = b15 + s15
-                    htf15_buy_pct = b15 / t15 * 100 if t15 > 0 else 50.0
-                    htf15_sel_pct = s15 / t15 * 100 if t15 > 0 else 50.0
-                    htf15_ok_buy = htf15_buy_pct >= self.MIN_VOTE_PCT
-                    htf15_ok_sell = htf15_sel_pct >= self.MIN_VOTE_PCT
-            except Exception as e:
-                logger.debug(f"15-min data error {symbol}: {e}")
-
             htf_bull = (
                 float(ind["htf_bull"].iloc[-1])
                 if "htf_bull" in ind.columns
@@ -2513,10 +2560,6 @@ class PaperTradingEngine:
 
             buy_score = s5_buy_pct
             sell_score = s5_sel_pct
-            htf15_conflict_buy = htf15_ok_sell and not htf15_ok_buy
-            htf15_conflict_sell = htf15_ok_buy and not htf15_ok_sell
-            effective_buy_min = self.MIN_VOTE_PCT
-            effective_sell_min = self.MIN_VOTE_PCT
 
             # NOTE: previously this required a strategy's votes to clear a
             # percentage-of-total-votes threshold (MIN_VOTE_PCT) — a
@@ -2765,7 +2808,6 @@ class PaperTradingEngine:
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(buy_score,1)}) | "
                         f"5m Vote: {round(s5_buy_pct,1)}% | "
-                        f"15m Vote: {round(htf15_buy_pct,1)}% | "
                         f"HTF: {round(htf_bull,3)} | "
                         f"Slot: {_current_slot_lbl}"
                     )
@@ -2798,7 +2840,6 @@ class PaperTradingEngine:
                     log_entry["reason"] = (
                         f"Strategy: {best_strategy} (Score: {round(sell_score,1)}) | "
                         f"5m Vote: {round(s5_sel_pct,1)}% | "
-                        f"15m Vote: {round(htf15_sel_pct,1)}% | "
                         f"HTF: {round(htf_bull,3)} | "
                         f"Slot: {_current_slot_lbl}"
                     )
@@ -3391,6 +3432,13 @@ class BacktestEngine:
                     kite, token, fetch_start, end, strat_timeframe,
                     _hist_limiter, tag=f"backtest {sym}",
                 )
+                # No-op for backtests over past dates (every bar is already
+                # closed relative to real wall-clock time). Matters when
+                # `end` is today: without this, the tail of the backtest
+                # picks up the same still-forming-candle contamination as
+                # live trading, manufacturing trades that couldn't have
+                # happened at that exact timestamp and skewing win-rate.
+                data = _drop_forming_candle(data, strat_timeframe, datetime.now())
                 if data:
                     _first_dt = data[0].get('date')
                     _last_dt = data[-1].get('date')
@@ -3810,6 +3858,7 @@ class BacktestEngine:
                 kite, 256265, fetch_start, end, "3minute",
                 _hist_limiter, tag="backtest nifty context",
             )
+            data = _drop_forming_candle(data, "3minute", datetime.now())
             if not data or len(data) < 20:
                 return None
             df = pd.DataFrame(data)
