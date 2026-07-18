@@ -51,6 +51,10 @@ STRATEGY_META = {}
 STRATEGY_EXITS = {}
 STRATEGY_DIAGNOSTICS = {}
 _STRATEGY_SOURCE_MODULE = {}
+# Tracks, per MODULE name, which priority level (and file path) actually won
+# registration — see _register_module's docstring for why this exists.
+_MODULE_PRIORITY = {}
+_MODULE_SOURCE_PATH = {}
 
 def _load_module_from_file(module_name, file_path):
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -87,12 +91,56 @@ def _validate_module(name, mod):
         return None
     return all_strats
 
-def _register_module(name, mod):
-    if name in STRATEGY_REGISTRY:
+def _register_module(name, mod, file_path=None, priority=0):
+    """Register a strategy module's contents.
+
+    priority: higher wins on a module-NAME collision (not a strategy-name
+    collision — that's handled separately below via _STRATEGY_SOURCE_MODULE).
+    Root-level files (next to ultimate_scanner.py — priority=1) always beat
+    a same-named file sitting in the strategies/ subfolder (priority=0),
+    regardless of scan order, because the root level is where this project's
+    actively-edited strategy files live (per intraday_strategy.py's own
+    location). Previously this function did:
+        if name in STRATEGY_REGISTRY: return True
+    which silently kept whichever module happened to be scanned FIRST
+    (the strategies/ subfolder, scanned before the root dir) and threw away
+    the root-level file with zero warning — meaning edits to e.g.
+    intraday_strategy.py at the repo root could be completely invisible to
+    the running system forever if a stale/duplicate copy with the same
+    module name existed in strategies/. Now: any name collision is loud
+    (prints both file paths + last-modified times), and the higher-priority
+    (root-level) copy always wins the STRATEGY_REGISTRY/META/etc. entries,
+    so "which file is actually live" is both deterministic and visible in
+    the startup log instead of a silent no-op.
+    """
+    existing_priority = _MODULE_PRIORITY.get(name)
+    if existing_priority is not None and existing_priority >= priority:
+        existing_path = _MODULE_SOURCE_PATH.get(name, '?')
+        print(
+            f"⚠ Module name collision: '{name}' already registered from "
+            f"'{existing_path}' — skipping lower/equal-priority copy at "
+            f"'{file_path or '?'}' (this file's changes will NOT take effect "
+            f"until the collision is resolved, e.g. rename/remove one copy)"
+        )
         return True
     all_strats = _validate_module(name, mod)
     if all_strats is None:
         return False
+    if existing_priority is not None:
+        existing_path = _MODULE_SOURCE_PATH.get(name, '?')
+        try:
+            existing_mtime = os.path.getmtime(existing_path) if existing_path != '?' else None
+            new_mtime = os.path.getmtime(file_path) if file_path else None
+        except OSError:
+            existing_mtime = new_mtime = None
+        print(
+            f"⚠ Module name collision: '{name}' registered from both "
+            f"'{existing_path}' (mtime={existing_mtime}) and "
+            f"'{file_path or '?'}' (mtime={new_mtime}) — using the "
+            f"higher-priority copy at '{file_path or '?'}'"
+        )
+    _MODULE_PRIORITY[name] = priority
+    _MODULE_SOURCE_PATH[name] = file_path or getattr(mod, '__file__', '?')
     meta = getattr(mod, 'strategy_meta', {}) or {}
     diagnostics = getattr(mod, 'strategy_diagnostics', {}) or {}
     exits = getattr(mod, 'strategy_exits', {}) or {}
@@ -118,25 +166,30 @@ def _register_module(name, mod):
     print(f"✓ {name} imported successfully ({len(all_strats)} strategies)")
     return True
 
-def _scan_directory(directory, use_import_module):
+def _scan_directory(directory, use_import_module, priority):
     if not directory or not os.path.isdir(directory):
         return
     for finder, mod_name, is_pkg in pkgutil.iter_modules([directory]):
         if is_pkg or mod_name.startswith('_') or mod_name in _NON_STRATEGY_FILES:
             continue
+        file_path = os.path.join(directory, f"{mod_name}.py")
         try:
             if use_import_module:
                 mod = importlib.import_module(mod_name)
+                file_path = getattr(mod, '__file__', file_path)
             else:
-                file_path = os.path.join(directory, f"{mod_name}.py")
                 mod = _load_module_from_file(mod_name, file_path)
         except Exception as e:
             print(f"✗ Failed to import candidate strategy module '{mod_name}': {e}")
             continue
-        _register_module(mod_name, mod)
+        _register_module(mod_name, mod, file_path=file_path, priority=priority)
 
-_scan_directory(_strategies_subfolder, use_import_module=True)
-_scan_directory(_current_dir, use_import_module=False)
+# Root-level files (next to ultimate_scanner.py, priority=1) always win a
+# module-name collision over the strategies/ subfolder (priority=0) — see
+# _register_module. Scan order no longer determines the winner, only the
+# priority does, so this could be called in either order safely.
+_scan_directory(_strategies_subfolder, use_import_module=True, priority=0)
+_scan_directory(_current_dir, use_import_module=False, priority=1)
 
 print(f"Loaded strategy sets: {list(STRATEGY_REGISTRY.keys())}")
 print(f"Total individual strategies: {len(STRATEGY_META)}")
