@@ -1,5 +1,33 @@
-# ultimate_scanner.py  ─ v9.8  STRATEGY-AGNOSTIC SCORING
+# ultimate_scanner.py  ─ v9.9  SCAN-THEN-PICK-BEST ENTRY FLOW
 # ============================================================
+# CHANGES in v9.9:
+#   • _check_signal() split into three phases so the engine no longer
+#     fires on whichever symbol happens to qualify first while scanning:
+#       1. _manage_open_position()   — exits, checked immediately, every
+#                                       cycle, for every symbol currently
+#                                       held (never delayed).
+#       2. _evaluate_entry_signal()  — checks whether a symbol WITHOUT a
+#                                       position currently qualifies for
+#                                       a fresh entry; returns a candidate
+#                                       dict instead of placing an order.
+#       3. _confirm_and_execute_best() — called only on the best-ranked
+#                                       candidate(s) from a FULL universe
+#                                       scan pass; re-fetches price and
+#                                       rejects the trade if it drifted
+#                                       more than MAX_SIGNAL_PRICE_DRIFT_PCT
+#                                       since the signal was captured
+#                                       (guards against stale/false
+#                                       signals discovered by the time the
+#                                       rest of the scan finishes).
+#   • _monitor_loop() now scans the WHOLE NIFTY 200 universe every cycle,
+#     collects every qualifying entry candidate, ranks them by score, and
+#     only executes the top N (N = free position slots) — instead of the
+#     old "first symbol found in scan order wins the slot" behavior.
+#   • BacktestEngine.run()'s event loop now groups bar-events by identical
+#     timestamp (itertools.groupby) and applies the exact same
+#     rank-then-take-best-N selection per timestamp, so backtest and live
+#     use the same signal-selection rule and stay comparable.
+# ------------------------------------------------------------
 # CHANGES in v9.8:
 #   • Removed strategy-specific panel/gate scoring (v4_high_trust coupling)
 #   • Simplified scoring to be strategy-agnostic
@@ -21,6 +49,7 @@ from flask import Flask, render_template_string, request, jsonify, session, redi
 from markupsafe import escape
 import warnings, traceback, shutil, glob
 from collections import deque
+from itertools import groupby
 import logging
 from logging.handlers import RotatingFileHandler
 from threading import Lock
@@ -1292,6 +1321,14 @@ class PaperTradingEngine:
     # happens every time) means the 100-file retention cap in _backup_file
     # actually spans hours of history instead of a couple of minutes.
     BACKUP_INTERVAL_SECONDS = 300
+    # Scan-then-pick-best entry flow (see _evaluate_entry_signal /
+    # _confirm_and_execute_best / _monitor_loop): a full NIFTY 200 scan
+    # pass takes real wall-clock time, so by the time the best-ranked
+    # candidate is actually about to be executed, price may have moved
+    # from what it was when the signal was first captured. This caps how
+    # much drift is tolerated before the trade is skipped as stale —
+    # this is also what screens out signals that were just a brief blip.
+    MAX_SIGNAL_PRICE_DRIFT_PCT = 0.3
     
     def __init__(self, config, strategies_dict, trading_mode='INTRADAY', strategy_name=None, risk_config=None):
         self.config = config
@@ -2155,7 +2192,7 @@ class PaperTradingEngine:
         # enough runway to square off an INTRADAY (MIS) position by 15:15.
         # CNC/Delivery has no forced square-off, so it may enter any time
         # during market hours (already gated to 9:18-15:30 by the caller in
-        # _check_signal via MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES / MARKET_CLOSE).
+        # _evaluate_entry_signal via MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES / MARKET_CLOSE).
         if self.trading_mode == 'INTRADAY':
             if mins >= self.NO_NEW_TRADES_AFTER:
                 _block(f"After cutoff {now.strftime('%H:%M')} >= 14:30")
@@ -2433,7 +2470,155 @@ class PaperTradingEngine:
 
     
 
-    def _check_signal(self, symbol, kite, prefetched_ltp=None):
+    def _manage_open_position(self, symbol, kite, prefetched_ltp=None):
+        """
+        Manage an EXISTING open position for `symbol`: strategy
+        reversal-exit and stop-loss/target checks, plus the IN_POSITION
+        signal-log entry. Always evaluated immediately for every symbol
+        currently held, every cycle — exits are never deferred by the
+        scan-then-rank-then-confirm entry flow below (see
+        _evaluate_entry_signal / _confirm_and_execute_best), since a
+        stale exit is a real money risk in a way a stale entry never is.
+        """
+        if symbol not in SYMBOL_MAP:
+            return
+        try:
+            now = datetime.now()
+            mins = now.hour * 60 + now.minute
+            if mins >= self.MARKET_CLOSE:
+                return
+
+            min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
+            strat_timeframe = _get_strategy_timeframe(self.strategies_dict)
+            strat_lookback_days = _lookback_days(strat_timeframe, min_bars_needed)
+
+            _hist_limiter.wait(f"{strat_timeframe} {symbol}")
+            data5 = kite.historical_data(
+                SYMBOL_MAP[symbol]["token"],
+                now - timedelta(days=strat_lookback_days),
+                now,
+                strat_timeframe,
+            )
+            # See _evaluate_entry_signal for why this strip is required —
+            # same still-forming-candle issue applies to exit checks too.
+            data5 = _drop_forming_candle(data5, strat_timeframe, now)
+            if not data5 or len(data5) < min_bars_needed:
+                return
+
+            df = pd.DataFrame(data5)
+            ind = Indicators.calculate_all(df)
+            ltp_initial = (
+                prefetched_ltp if prefetched_ltp is not None else float(df["close"].iloc[-1])
+            )
+
+            log_entry = {
+                "time": now.strftime("%H:%M:%S"),
+                "date": now.strftime("%Y-%m-%d"),
+                "symbol": symbol,
+                "ltp": round(ltp_initial, 2),
+                "volume": int(df["volume"].iloc[-1]),
+                "strategy_mode": f"NATIVE ({self.strategy_name})",
+            }
+
+            with self._lock:
+                pos = self.data["positions"].get(symbol)
+                if not pos:
+                    return
+
+                log_entry["status"] = "IN_POSITION"
+                log_entry["pos_side"] = pos["side"]
+                log_entry["pos_entry"] = pos["entry_price"]
+                log_entry["pos_qty"] = pos["qty"]
+                self._add_signal_log(log_entry)
+
+                fresh_ltp = (
+                    prefetched_ltp
+                    if prefetched_ltp is not None
+                    else (self._get_live_ltp(symbol) or ltp_initial)
+                )
+
+                try:
+                    held_mins = (
+                        (datetime.now() - datetime.fromisoformat(pos["entry_time"]))
+                        .total_seconds() / 60
+                    )
+                except Exception:
+                    held_mins = 0
+
+                move_pct = (
+                    ((fresh_ltp - pos["entry_price"]) / pos["entry_price"] * 100)
+                    if pos["side"] == "BUY"
+                    else (
+                        (pos["entry_price"] - fresh_ltp) / pos["entry_price"] * 100
+                    )
+                )
+
+                hold_locked = False
+                if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
+                    held_days = held_mins / (60 * 24)
+                    hold_locked = held_days < self.min_hold_days
+                    log_entry["hold_days_left"] = round(self.min_hold_days - held_days, 2)
+
+                if hold_locked:
+                    exit_price, reason = None, None
+                else:
+                    exit_price, reason = self._check_reversal_exit(symbol, pos, df, ind)
+                    if not exit_price:
+                        self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
+                        exit_price, reason = self._check_stop_loss_target(
+                            symbol, pos, df, fresh_ltp
+                        )
+
+                if exit_price:
+                    if symbol in self.data["positions"]:
+                        el = log_entry.copy()
+                        el.update({"status": f"EXIT_{reason}", "exit_price": exit_price})
+                        self._add_signal_log(el)
+                        self._close_position_nolock(
+                            symbol, exit_price=exit_price, reason=reason
+                        )
+                        self._save()
+                    return
+
+                self._save()
+
+        except Exception as e:
+            logger.error(f"Position management error {symbol}: {e}")
+            traceback.print_exc()
+            try:
+                self._add_signal_log(
+                    {
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "symbol": symbol,
+                        "status": "ERROR",
+                        "reason": str(e)[:150],
+                    }
+                )
+            except Exception:
+                pass
+
+    def _evaluate_entry_signal(self, symbol, kite, prefetched_ltp=None):
+        """
+        Phase 1 of the scan-then-pick-best entry flow: check whether
+        `symbol` currently qualifies for a FRESH entry, WITHOUT placing
+        any order. Every rejection reason (insufficient data, min price,
+        outside trade slot/cutoff, cooldown, no strategy trigger) is
+        still logged exactly as before, so the Signal Log keeps showing
+        why a symbol didn't make the cut. If the symbol qualifies, this
+        returns a small candidate dict describing the signal instead of
+        acting on it — the caller (_monitor_loop) collects candidates
+        from the WHOLE universe first, ranks them, and only then calls
+        _confirm_and_execute_best() on the top-scoring one(s). This is
+        what stops a genuinely good signal from being skipped just
+        because some earlier symbol in scan order also happened to
+        qualify — every candidate now gets compared before anything is
+        actually placed.
+
+        Must only be called for a symbol with NO open position — the
+        caller routes symbols that already have one to
+        _manage_open_position() instead.
+        """
         if symbol not in SYMBOL_MAP:
             self._log_diag(
                 f"{symbol}:not_in_map",
@@ -2446,21 +2631,15 @@ class PaperTradingEngine:
                     "reason": "Symbol not found in instrument cache (delisted/renamed/typo?)",
                 },
             )
-            return
+            return None
         try:
             now = datetime.now()
             mins = now.hour * 60 + now.minute
 
-            with self._lock:
-                _has_open_pos = symbol in self.data.get("positions", {})
-
-            if not _has_open_pos:
-                if self.MARKET_OPEN <= mins < self.MARKET_OPEN + self.NEW_ENTRY_WARMUP_MINUTES:
-                    return
-                if mins >= self.MARKET_CLOSE:
-                    return
-            elif mins >= self.MARKET_CLOSE:
-                return
+            if self.MARKET_OPEN <= mins < self.MARKET_OPEN + self.NEW_ENTRY_WARMUP_MINUTES:
+                return None
+            if mins >= self.MARKET_CLOSE:
+                return None
 
             _current_slot_ok = _in_trade_slot(mins)
             _current_slot_lbl = _slot_label(mins)
@@ -2480,9 +2659,7 @@ class PaperTradingEngine:
             # candle when to_date is ~now — its OHLC is just a snapshot of
             # whatever ticks have arrived so far, not a real close. Strip
             # it so strategies (e.g. ORB) never evaluate a breakout against
-            # a candle that hasn't actually finished yet. Without this, a
-            # signal can fire seconds into a brand-new candle instead of
-            # waiting for it to close 3(or N) minutes later.
+            # a candle that hasn't actually finished yet.
             data5 = _drop_forming_candle(data5, strat_timeframe, now)
             if not data5 or len(data5) < min_bars_needed:
                 self._log_diag(
@@ -2499,7 +2676,7 @@ class PaperTradingEngine:
                         ),
                     },
                 )
-                return
+                return None
 
             df = pd.DataFrame(data5)
             ind = Indicators.calculate_all(df)
@@ -2525,23 +2702,9 @@ class PaperTradingEngine:
                         ),
                     },
                 )
-                return
+                return None
 
             avg_vol = float(df["volume"].iloc[-20:].mean())
-            cur_vol = int(df["volume"].iloc[-1])
-            now_mins = now.hour * 60 + now.minute
-            # NOTE: the pre-strategy low-volume rejection that used to sit
-            # here (returning before any strategy function was even
-            # called) has been removed — it silently killed every signal
-            # regardless of what the strategy itself actually requires.
-            # Volume/quality filtering, if a strategy wants it, belongs
-            # inside that strategy's own file, not as a blanket engine gate.
-
-            # NOTE: pin-direction restriction removed along with the
-            # Monitored/pinned feature — every symbol in the scan universe
-            # (NIFTY 200) is now checked for both BUY and SELL signals.
-            allow_buy = True
-            allow_sell = True
 
             df_w, ind_w = _session_anchored_window(df, ind, min_bars_needed)
 
@@ -2556,20 +2719,12 @@ class PaperTradingEngine:
                 else 0.5
             )
 
-            sector_bias_log = ""
-
             buy_score = s5_buy_pct
             sell_score = s5_sel_pct
 
-            # NOTE: previously this required a strategy's votes to clear a
-            # percentage-of-total-votes threshold (MIN_VOTE_PCT) — a
-            # "panel" gate on top of the strategy's own signal. Removed:
-            # a strategy triggering (strat5_b/s >= 1.0) IS the signal,
-            # full stop.
-            buy_ok = allow_buy and strat5_b >= 1.0
+            buy_ok = strat5_b >= 1.0
             sell_ok = (
-                allow_sell
-                and strat5_s >= 1.0
+                strat5_s >= 1.0
                 and self.trading_mode != 'DELIVERY'
             )
 
@@ -2590,8 +2745,8 @@ class PaperTradingEngine:
             direction_triggered = [
                 n for n in all_triggered
                 if (lambda _dir: (
-                    (allow_buy and _dir == 'BUY')
-                    or (allow_sell and _dir == 'SELL')
+                    (buy_ok and _dir == 'BUY')
+                    or (sell_ok and _dir == 'SELL')
                     or _dir == 'BOTH'
                 ))(AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH'))
             ]
@@ -2610,34 +2765,7 @@ class PaperTradingEngine:
                 best_strategy = "VOTE_SIGNAL"
 
             atr = float(ind["atr"].iloc[-1]) if "atr" in ind.columns else None
-            nifty_data = get_nifty_data(kite)
 
-            if nifty_data:
-                market_trend = (
-                    "BULLISH" if nifty_data["change"] > 0.3
-                    else "BEARISH" if nifty_data["change"] < -0.3
-                    else "NEUTRAL"
-                )
-                market_regime = "TRENDING" if nifty_data["adx"] > 25 else "RANGING"
-            else:
-                market_trend = "NEUTRAL"
-                market_regime = "UNKNOWN"
-
-            # NOTE: market_trend/market_regime are still computed and logged
-            # for visibility, but no longer used to block a signal — the
-            # "skip breakout strategies while market is RANGING" gate has
-            # been removed. A strategy that triggers places a trade.
-            skip_breakout = False
-
-            # Ask each strategy function in the user's selected strategy file
-            # for its own live diagnostic data (EMA values, thresholds,
-            # whatever it wants to expose) via the optional
-            # AVAILABLE_STRATEGY_DIAGNOSTICS registry — see strategies.py.
-            # Computed every cycle (regardless of trigger/status) purely from
-            # data already fetched (df_w/ind_w), no extra API calls. This is
-            # what drives the Signal Log UI's dynamic per-strategy column —
-            # a strategy with no diagnostics function registered simply
-            # contributes nothing here.
             strategy_data = {}
             for _sd_name in self.strategies_dict:
                 _diag_fn = AVAILABLE_STRATEGY_DIAGNOSTICS.get(_sd_name)
@@ -2665,9 +2793,6 @@ class PaperTradingEngine:
                 "all_strategies": all_triggered[:8],
                 "strategy_data": strategy_data,
                 "best_strategy": best_strategy,
-                "sector_bias": sector_bias_log,
-                "market_trend": market_trend,
-                "market_regime": market_regime,
                 "strategy_mode": f"NATIVE ({self.strategy_name})",
             }
 
@@ -2677,209 +2802,81 @@ class PaperTradingEngine:
             except Exception:
                 log_entry["candle_patterns"] = []
 
-            with self._lock:
-                pos = self.data["positions"].get(symbol)
-
-                if pos:
-                    log_entry["status"] = "IN_POSITION"
-                    log_entry["pos_side"] = pos["side"]
-                    log_entry["pos_entry"] = pos["entry_price"]
-                    log_entry["pos_qty"] = pos["qty"]
-                    self._add_signal_log(log_entry)
-
-                    fresh_ltp = (
-                        prefetched_ltp
-                        if prefetched_ltp is not None
-                        else (self._get_live_ltp(symbol) or ltp_initial)
-                    )
-
-                    try:
-                        held_mins = (
-                            (datetime.now() - datetime.fromisoformat(pos["entry_time"]))
-                            .total_seconds() / 60
-                        )
-                    except Exception:
-                        held_mins = 0
-
-                    move_pct = (
-                        ((fresh_ltp - pos["entry_price"]) / pos["entry_price"] * 100)
-                        if pos["side"] == "BUY"
-                        else (
-                            (pos["entry_price"] - fresh_ltp) / pos["entry_price"] * 100
-                        )
-                    )
-
-                    hold_locked = False
-                    if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
-                        held_days = held_mins / (60 * 24)
-                        hold_locked = held_days < self.min_hold_days
-                        log_entry["hold_days_left"] = round(self.min_hold_days - held_days, 2)
-
-                    if hold_locked:
-                        exit_price, reason = None, None
-                    else:
-                        exit_price, reason = self._check_reversal_exit(symbol, pos, df, ind)
-                        if not exit_price:
-                            self._update_trailing_stop(pos, fresh_ltp, move_pct, mins)
-                            exit_price, reason = self._check_stop_loss_target(
-                                symbol, pos, df, fresh_ltp
-                            )
-
-                    if exit_price:
-                        if symbol in self.data["positions"]:
-                            el = log_entry.copy()
-                            el.update({"status": f"EXIT_{reason}", "exit_price": exit_price})
-                            self._add_signal_log(el)
-                            self._close_position_nolock(
-                                symbol, exit_price=exit_price, reason=reason
-                            )
-                            self._save()
-                        return
-
-                    
-
-                    self._save()
-                    return
-
-                if self.trading_mode == 'INTRADAY':
-                    if mins >= self.NO_NEW_TRADES_AFTER:
-                        log_entry["status"] = "REJECTED"
-                        log_entry["reason"] = (
-                            f"After cutoff {now.strftime('%H:%M')} (cutoff=14:30)"
-                        )
-                        self._add_signal_log(log_entry)
-                        return
-
-                    if not _current_slot_ok:
-                        log_entry["status"] = "REJECTED"
-                        log_entry["reason"] = (
-                            f"Outside trade slot — {_current_slot_lbl} "
-                            f"| Allowed: 9:15–14:00"
-                        )
-                        self._add_signal_log(log_entry)
-                        return
-
-                if symbol in self.last_exit_time:
-                    was_reversal = self.last_exit_reason.get(symbol) == 'STRATEGY_EXIT'
-                    cooldown_window = (
-                        self.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal else self.COOLDOWN_MINUTES
-                    )
-                    ts = (now - self.last_exit_time[symbol]).total_seconds() / 60
-                    if ts < cooldown_window:
-                        log_entry["status"] = "COOLDOWN"
-                        log_entry["reason"] = (
-                            f"Cooldown {ts:.1f}m / {cooldown_window}m remaining"
-                        )
-                        self._add_signal_log(log_entry)
-                        return
-
-                if self.data["positions"]:
-                    other = list(self.data["positions"].keys())[0]
-                    log_entry["status"] = "BLOCKED_OTHER_POS"
-                    log_entry["reason"] = f"Already in position: {other}"
-                    self._add_signal_log(log_entry)
-                    return
-
-                if skip_breakout:
+            if self.trading_mode == 'INTRADAY':
+                if mins >= self.NO_NEW_TRADES_AFTER:
                     log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
-                        f"BREAKOUT strategy skipped — market is {market_regime}"
+                        f"After cutoff {now.strftime('%H:%M')} (cutoff=14:30)"
                     )
                     self._add_signal_log(log_entry)
-                    return
+                    return None
 
-                # NOTE: the correlation gate (blocking a BUY/SELL on a
-                # HEAVYWEIGHTS symbol that "fights" the NIFTY trend) has
-                # been removed — a strategy signal is no longer second-
-                # guessed against index trend.
-
-
-
-                if buy_ok:
-                    _quote_limiter.wait(f"order_ltp BUY {symbol}")
-                    ltp_for_order = kite.ltp([f"NSE:{symbol}"])
-                    ltp_for_order = (
-                        float(ltp_for_order[f"NSE:{symbol}"]["last_price"])
-                        if ltp_for_order and f"NSE:{symbol}" in ltp_for_order
-                        else ltp_initial
-                    )
-                    log_entry["status"] = "BUY_SIGNAL"
-                    log_entry["ltp"] = round(ltp_for_order, 2)
+                if not _current_slot_ok:
+                    log_entry["status"] = "REJECTED"
                     log_entry["reason"] = (
-                        f"Strategy: {best_strategy} (Score: {round(buy_score,1)}) | "
-                        f"5m Vote: {round(s5_buy_pct,1)}% | "
-                        f"HTF: {round(htf_bull,3)} | "
-                        f"Slot: {_current_slot_lbl}"
+                        f"Outside trade slot — {_current_slot_lbl} "
+                        f"| Allowed: 9:15–14:00"
                     )
                     self._add_signal_log(log_entry)
-                    result = self._open_position_nolock(
-                        symbol, "BUY", ltp_for_order, "ALGO_BUY",
-                        round(buy_score, 1), best_strategy, atr, df, ind, log_entry,
-                    )
-                    if result is None:
-                        for lg in self._signal_logs:
-                            if (
-                                lg.get("symbol") == symbol
-                                and lg.get("status") == "BUY_SIGNAL"
-                                and lg.get("time") == log_entry.get("time")
-                            ):
-                                lg["status"] = "BUY_NO_FILL"
-                                break
-                        self._save()
+                    return None
 
-                elif sell_ok:
-                    _quote_limiter.wait(f"order_ltp SELL {symbol}")
-                    ltp_for_order = kite.ltp([f"NSE:{symbol}"])
-                    ltp_for_order = (
-                        float(ltp_for_order[f"NSE:{symbol}"]["last_price"])
-                        if ltp_for_order and f"NSE:{symbol}" in ltp_for_order
-                        else ltp_initial
-                    )
-                    log_entry["status"] = "SELL_SIGNAL"
-                    log_entry["ltp"] = round(ltp_for_order, 2)
+            if symbol in self.last_exit_time:
+                was_reversal = self.last_exit_reason.get(symbol) == 'STRATEGY_EXIT'
+                cooldown_window = (
+                    self.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal else self.COOLDOWN_MINUTES
+                )
+                ts = (now - self.last_exit_time[symbol]).total_seconds() / 60
+                if ts < cooldown_window:
+                    log_entry["status"] = "COOLDOWN"
                     log_entry["reason"] = (
-                        f"Strategy: {best_strategy} (Score: {round(sell_score,1)}) | "
-                        f"5m Vote: {round(s5_sel_pct,1)}% | "
-                        f"HTF: {round(htf_bull,3)} | "
-                        f"Slot: {_current_slot_lbl}"
+                        f"Cooldown {ts:.1f}m / {cooldown_window}m remaining"
                     )
                     self._add_signal_log(log_entry)
-                    result = self._open_position_nolock(
-                        symbol, "SELL", ltp_for_order, "ALGO_SELL",
-                        round(sell_score, 1), best_strategy, atr, df, ind, log_entry,
-                    )
-                    if result is None:
-                        for lg in self._signal_logs:
-                            if (
-                                lg.get("symbol") == symbol
-                                and lg.get("status") == "SELL_SIGNAL"
-                                and lg.get("time") == log_entry.get("time")
-                            ):
-                                lg["status"] = "SELL_NO_FILL"
-                                break
-                        self._save()
+                    return None
 
+            if not (buy_ok or sell_ok):
+                reasons = []
+                leaning_buy = buy_score >= sell_score
+                check_dir = "BUY" if leaning_buy else "SELL"
+                if check_dir == "BUY":
+                    if strat5_b < 1.0:
+                        reasons.append(f"No {self.strategy_name} BUY strategy triggered")
                 else:
-                    reasons = []
-                    leaning_buy = buy_score >= sell_score
-                    check_dir = "BUY" if leaning_buy else "SELL"
-                    if check_dir == "BUY":
-                        if strat5_b < 1.0:
-                            reasons.append(f"No {self.strategy_name} BUY strategy triggered")
-                    else:
-                        if strat5_s < 1.0:
-                            reasons.append(f"No {self.strategy_name} SELL strategy triggered")
+                    if strat5_s < 1.0:
+                        reasons.append(f"No {self.strategy_name} SELL strategy triggered")
 
-                    log_entry["status"] = "REJECTED"
-                    log_entry["reason"] = (
-                        " | ".join(reasons[:3]) if reasons else "No clear signal"
-                    )
-                    self._add_signal_log(log_entry)
+                log_entry["status"] = "REJECTED"
+                log_entry["reason"] = (
+                    " | ".join(reasons[:3]) if reasons else "No clear signal"
+                )
+                self._add_signal_log(log_entry)
+                return None
 
-                self._save()
+            side = 'BUY' if buy_ok else 'SELL'
+            score = buy_score if buy_ok else sell_score
+            vote_pct = s5_buy_pct if buy_ok else s5_sel_pct
+
+            # NOTE: this symbol is NOT executed here. It's handed back as a
+            # candidate — the monitor loop compares it against every other
+            # qualifying symbol from this same scan pass and only the
+            # best-ranked one(s) go to _confirm_and_execute_best().
+            return {
+                'symbol': symbol,
+                'side': side,
+                'score': score,
+                'vote_pct': vote_pct,
+                'htf_bull': htf_bull,
+                'ltp_at_signal': ltp_initial,
+                'strategy': best_strategy,
+                'atr': atr,
+                'df': df,
+                'ind': ind,
+                'log_entry': log_entry,
+                'slot_label': _current_slot_lbl,
+            }
 
         except Exception as e:
-            logger.error(f"Signal check error {symbol}: {e}")
+            logger.error(f"Signal evaluation error {symbol}: {e}")
             traceback.print_exc()
             try:
                 self._add_signal_log(
@@ -2893,7 +2890,86 @@ class PaperTradingEngine:
                 )
             except Exception:
                 pass
-    
+            return None
+
+    def _confirm_and_execute_best(self, candidate, kite):
+        """
+        Phase 2 of the scan-then-pick-best entry flow: called only for a
+        candidate the monitor loop has already picked as one of the
+        best-ranked signals from a full universe pass (see
+        _evaluate_entry_signal). Scanning ~200 symbols takes real
+        wall-clock time, so price may have moved since that symbol's
+        signal was captured — this re-fetches the current LTP and skips
+        the trade if it has drifted more than MAX_SIGNAL_PRICE_DRIFT_PCT,
+        instead of blindly firing at a now-stale price. This is also what
+        screens out signals that were just a brief false blip by the time
+        the rest of the scan finished.
+        """
+        symbol = candidate['symbol']
+        side = candidate['side']
+        signal_ltp = candidate['ltp_at_signal']
+
+        with self._lock:
+            if len(self.data.get("positions", {})) >= self.MAX_OPEN_POS:
+                return None
+            if symbol in self.data.get("positions", {}):
+                return None
+
+        try:
+            _quote_limiter.wait(f"confirm_ltp {side} {symbol}")
+            q = kite.ltp([f"NSE:{symbol}"])
+            fresh_ltp = (
+                float(q[f"NSE:{symbol}"]["last_price"])
+                if q and f"NSE:{symbol}" in q
+                else signal_ltp
+            )
+        except Exception as e:
+            logger.error(f"Confirm LTP fetch failed {symbol}: {e}")
+            fresh_ltp = signal_ltp
+
+        drift_pct = abs(fresh_ltp - signal_ltp) / signal_ltp * 100 if signal_ltp else 0
+        log_entry = candidate['log_entry'].copy()
+
+        if drift_pct > self.MAX_SIGNAL_PRICE_DRIFT_PCT:
+            log_entry["status"] = "REJECTED"
+            log_entry["reason"] = (
+                f"Price drifted {drift_pct:.2f}% since signal capture "
+                f"(₹{signal_ltp:.2f} → ₹{fresh_ltp:.2f}, max allowed "
+                f"{self.MAX_SIGNAL_PRICE_DRIFT_PCT:.2f}%) — stale signal, skipped"
+            )
+            self._add_signal_log(log_entry)
+            return None
+
+        log_entry["status"] = f"{side}_SIGNAL"
+        log_entry["ltp"] = round(fresh_ltp, 2)
+        log_entry["reason"] = (
+            f"Strategy: {candidate['strategy']} (Score: {round(candidate['score'],1)}) | "
+            f"5m Vote: {round(candidate['vote_pct'],1)}% | "
+            f"HTF: {round(candidate['htf_bull'],3)} | "
+            f"Slot: {candidate['slot_label']} | "
+            f"Drift: {drift_pct:.2f}%"
+        )
+        self._add_signal_log(log_entry)
+
+        result = self._open_position_nolock(
+            symbol, side, fresh_ltp, f"ALGO_{side}",
+            round(candidate['score'], 1), candidate['strategy'], candidate['atr'],
+            candidate['df'], candidate['ind'], log_entry,
+        )
+        if result is None:
+            for lg in self._signal_logs:
+                if (
+                    lg.get("symbol") == symbol
+                    and lg.get("status") == f"{side}_SIGNAL"
+                    and lg.get("time") == log_entry.get("time")
+                ):
+                    lg["status"] = f"{side}_NO_FILL"
+                    break
+            self._save()
+        else:
+            self._save()
+        return result
+
     def _monitor_loop(self):
         logger.info("Monitor started")
         squaredoff_today = None
@@ -2928,9 +3004,44 @@ class PaperTradingEngine:
                             batch_prices = {}
                     else:
                         batch_prices = {}
-                    for sym in all_syms:
-                        prefetched_ltp = batch_prices.get(sym)
-                        self._check_signal(sym, self._kite, prefetched_ltp=prefetched_ltp)
+
+                    # Phase A: manage every OPEN position immediately —
+                    # never deferred by the scan-then-rank entry flow
+                    # below, since a stale exit is a real money risk in a
+                    # way a stale entry never is.
+                    for sym in positions:
+                        self._manage_open_position(sym, self._kite, prefetched_ltp=batch_prices.get(sym))
+
+                    # Phase B: scan the FULL NIFTY 200 universe for
+                    # qualifying entry signals, collect every candidate
+                    # (instead of firing on whichever symbol happens to
+                    # qualify first in scan order), rank by score, and
+                    # only then re-check price and execute the best one(s)
+                    # — up to however many position slots are actually
+                    # free. This is what stops a good signal on a
+                    # later-scanned symbol from being silently discarded
+                    # just because an earlier, weaker symbol grabbed the
+                    # only slot first.
+                    with self._lock:
+                        slots_free = self.MAX_OPEN_POS - len(self.data.get("positions", {}))
+
+                    if slots_free > 0:
+                        candidates = []
+                        for sym in universe:
+                            if sym in positions:
+                                continue
+                            cand = self._evaluate_entry_signal(sym, self._kite, prefetched_ltp=batch_prices.get(sym))
+                            if cand:
+                                candidates.append(cand)
+
+                        candidates.sort(key=lambda c: c['score'], reverse=True)
+
+                        for cand in candidates[:slots_free]:
+                            with self._lock:
+                                if len(self.data.get("positions", {})) >= self.MAX_OPEN_POS:
+                                    break
+                            self._confirm_and_execute_best(cand, self._kite)
+
                     check_counter += 1
                     if check_counter % 30 == 0:
                         logger.info(f"Monitoring {len(universe)} NIFTY 200 stocks + {len(positions)} positions  |  batch_ltp covered {len(all_syms)} symbols")
@@ -3388,7 +3499,7 @@ class BacktestEngine:
         # filter, gap filter, or entry-quality veto remain in this loop —
         # a strategy triggering is the only condition for a trade. See the
         # inline notes further down where each was removed.
-        logger.info("Gate-free mode: a strategy trigger places a trade directly (matches live _check_signal)")
+        logger.info("Gate-free, scan-then-pick-best mode: strategy triggers are ranked across the full universe per bar-timestamp, matching live's _evaluate_entry_signal/_confirm_and_execute_best flow")
 
         min_bars_needed = _get_strategy_min_bars(self.strategies_dict)
         logger.info(f"Min-bar gate set to {min_bars_needed}")
@@ -3417,7 +3528,7 @@ class BacktestEngine:
         # range, used to reproduce live's market_trend/market_regime gates
         # (skip BREAKOUT-category strategies while the index is RANGING;
         # block a BUY/SELL on a HEAVYWEIGHTS symbol that fights the index
-        # trend — see get_nifty_data()/_check_signal() in
+        # trend — see get_nifty_data()/_manage_open_position()/_evaluate_entry_signal() in
         # PaperTradingEngine) without hitting the historical-data API on
         # every single bar-event. If the fetch fails, regime/correlation
         # gating is simply skipped for this run — same as live's own
@@ -3513,18 +3624,20 @@ class BacktestEngine:
         )
 
         vote_log_count = {}
-        for bar_time, sym, i in events:
-            sd = symbol_data[sym]
-            df, ind, dt_series = sd['df'], sd['ind'], sd['dt']
-            df_slice = df.iloc[:i+1]
-            ind_slice = ind.iloc[:i+1]
-            if len(df_slice) < min_bars_needed:
-                continue
-
-            current_bar = df_slice.iloc[-1]
-            ltp = float(current_bar['close'])
-            bar_high = float(current_bar['high'])
-            bar_low = float(current_bar['low'])
+        # Grouped by identical bar timestamp (events is already sorted by
+        # (bar_time, sym), so groupby just buckets consecutive matching
+        # timestamps together). This mirrors live\'s scan-then-pick-best
+        # entry flow (see PaperTradingEngine._evaluate_entry_signal /
+        # _confirm_and_execute_best / _monitor_loop): instead of grabbing
+        # whichever symbol\'s signal appears first in the (bar_time, sym)
+        # sort order for that instant, every symbol that qualifies AT THE
+        # SAME bar_time is collected into one candidate list, ranked by
+        # score, and only the top-scoring candidate(s) — up to however
+        # many position slots are actually free — get queued for entry.
+        # A stale/weaker earlier-alphabetical symbol no longer silently
+        # steals the slot from a stronger signal at the exact same moment.
+        for bar_time, group_iter in groupby(events, key=lambda e: e[0]):
+            group = list(group_iter)
             try:
                 bar_dt = bar_time if isinstance(bar_time, datetime) else pd.to_datetime(bar_time).to_pydatetime()
                 bar_mins = bar_dt.hour * 60 + bar_dt.minute
@@ -3532,269 +3645,304 @@ class BacktestEngine:
                 bar_dt = datetime.now()
                 bar_mins = 0
 
-            # Fill any pending entry queued from the PREVIOUS bar (the
-            # breakout candle) using THIS bar's OPEN as the entry
-            # reference price — i.e. the earliest available price of the
-            # candle that forms right after the breakout candle, not the
-            # breakout candle's own close. Only fires if this bar is
-            # exactly the very next bar after the signal bar and on the
-            # same trading day; otherwise the signal is stale and dropped
-            # (mirrors live: if you miss the next candle, the setup is
-            # gone, you don't chase it later).
-            _pending = pending_entries.pop(sym, None)
-            if _pending is not None:
-                same_day = bar_dt.date() == _pending['signal_date']
-                is_immediate_next_bar = i == _pending['signal_i'] + 1
-                if same_day and is_immediate_next_bar and len(positions) < max_open_pos:
-                    _side = _pending['side']
-                    _next_open = float(current_bar['open'])
-                    _target, _stoploss = self._calculate_atr_targets(_next_open, _side)
-                    _margin_per_share = _next_open * margin_pct
-                    _qty = int((wallet * 0.8) / _margin_per_share) if _margin_per_share > 0 else 0
-                    if _qty > 0:
-                        _fill_price = self._slip(_next_open, _side)
-                        if _side == 'BUY':
-                            _fill_price = min(_fill_price, round(bar_high, 2))
-                        else:
-                            _fill_price = max(_fill_price, round(bar_low, 2))
-                        positions[sym] = {
-                            'side': _side,
-                            'entry_price': _fill_price,
-                            'qty': _qty,
-                            'target': _target,
-                            'stoploss': _stoploss,
-                            'entry_time': bar_time,
-                            'entry_date': bar_dt.date(),
-                            'strategy': _pending['strategy'],
-                            'peak_price': _fill_price,
-                        }
-                        wallet -= _fill_price * _qty * margin_pct
-                        logger.info(
-                            f"BACKTEST {_side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
-                            f"(next-candle entry; signal bar close triggered prior candle)  "
-                            f"open={_next_open:.2f} fill={_fill_price:.2f}  qty={_qty}  "
-                            f"strategy={_pending['strategy']}  target={_target:.2f}  sl={_stoploss:.2f}  "
-                            f"open_positions={len(positions)}/{max_open_pos}"
-                        )
-                    # else: sized to zero, drop silently (matches existing
-                    # qty<=0 handling elsewhere in this loop)
-                else:
-                    logger.debug(
-                        f"  {sym} pending {_pending['side']} signal from bar {_pending['signal_i']} "
-                        f"dropped — next bar unavailable/not immediate or max_open_pos reached"
-                    )
-                # Whether filled or dropped, this bar was "consumed" by the
-                # pending-entry check — still fall through to normal
-                # exit-management / new-signal logic below for this same
-                # bar, since a freshly-opened position still needs to be
-                # tracked in `positions` on subsequent bars (not this one),
-                # and if nothing filled, this bar is free to generate a
-                # brand new signal of its own.
+            entry_candidates = []
 
-            if sym in positions:
-                pos = positions[sym]
-                exit_action = 'SELL' if pos['side'] == 'BUY' else 'BUY'
-                if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
-                    _eod_fill = self._slip(ltp, exit_action)
-                    _eod_fill = min(_eod_fill, round(bar_high, 2)) if exit_action == 'BUY' else max(_eod_fill, round(bar_low, 2))
-                    _release(sym, pos, _eod_fill, 'EOD_SQUAREOFF', bar_time)
-                    del positions[sym]
-                    logger.debug(f"  {sym} sq-off at {bar_dt.strftime('%H:%M')}")
+            for _, sym, i in group:
+                sd = symbol_data[sym]
+                df, ind, dt_series = sd['df'], sd['ind'], sd['dt']
+                df_slice = df.iloc[:i+1]
+                ind_slice = ind.iloc[:i+1]
+                if len(df_slice) < min_bars_needed:
                     continue
-                
-                if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
-                    days_held = (bar_dt.date() - pos['entry_date']).days
-                    if days_held < self.min_hold_days:
+
+                current_bar = df_slice.iloc[-1]
+                ltp = float(current_bar['close'])
+                bar_high = float(current_bar['high'])
+                bar_low = float(current_bar['low'])
+
+                # Fill any pending entry queued from the PREVIOUS bar (the
+                # breakout candle) using THIS bar's OPEN as the entry
+                # reference price — i.e. the earliest available price of the
+                # candle that forms right after the breakout candle, not the
+                # breakout candle's own close. Only fires if this bar is
+                # exactly the very next bar after the signal bar and on the
+                # same trading day; otherwise the signal is stale and dropped
+                # (mirrors live: if you miss the next candle, the setup is
+                # gone, you don't chase it later).
+                _pending = pending_entries.pop(sym, None)
+                if _pending is not None:
+                    same_day = bar_dt.date() == _pending['signal_date']
+                    is_immediate_next_bar = i == _pending['signal_i'] + 1
+                    if same_day and is_immediate_next_bar and len(positions) < max_open_pos:
+                        _side = _pending['side']
+                        _next_open = float(current_bar['open'])
+                        _target, _stoploss = self._calculate_atr_targets(_next_open, _side)
+                        _margin_per_share = _next_open * margin_pct
+                        _qty = int((wallet * 0.8) / _margin_per_share) if _margin_per_share > 0 else 0
+                        if _qty > 0:
+                            _fill_price = self._slip(_next_open, _side)
+                            if _side == 'BUY':
+                                _fill_price = min(_fill_price, round(bar_high, 2))
+                            else:
+                                _fill_price = max(_fill_price, round(bar_low, 2))
+                            positions[sym] = {
+                                'side': _side,
+                                'entry_price': _fill_price,
+                                'qty': _qty,
+                                'target': _target,
+                                'stoploss': _stoploss,
+                                'entry_time': bar_time,
+                                'entry_date': bar_dt.date(),
+                                'strategy': _pending['strategy'],
+                                'peak_price': _fill_price,
+                            }
+                            wallet -= _fill_price * _qty * margin_pct
+                            logger.info(
+                                f"BACKTEST {_side} {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
+                                f"(next-candle entry; signal bar close triggered prior candle)  "
+                                f"open={_next_open:.2f} fill={_fill_price:.2f}  qty={_qty}  "
+                                f"strategy={_pending['strategy']}  target={_target:.2f}  sl={_stoploss:.2f}  "
+                                f"open_positions={len(positions)}/{max_open_pos}"
+                            )
+                        # else: sized to zero, drop silently (matches existing
+                        # qty<=0 handling elsewhere in this loop)
+                    else:
+                        logger.debug(
+                            f"  {sym} pending {_pending['side']} signal from bar {_pending['signal_i']} "
+                            f"dropped — next bar unavailable/not immediate or max_open_pos reached"
+                        )
+                    # Whether filled or dropped, this bar was "consumed" by the
+                    # pending-entry check — still fall through to normal
+                    # exit-management / new-signal logic below for this same
+                    # bar, since a freshly-opened position still needs to be
+                    # tracked in `positions` on subsequent bars (not this one),
+                    # and if nothing filled, this bar is free to generate a
+                    # brand new signal of its own.
+
+                if sym in positions:
+                    pos = positions[sym]
+                    exit_action = 'SELL' if pos['side'] == 'BUY' else 'BUY'
+                    if self.trading_mode == 'INTRADAY' and bar_mins >= PaperTradingEngine.SQUARE_OFF_TIME:
+                        _eod_fill = self._slip(ltp, exit_action)
+                        _eod_fill = min(_eod_fill, round(bar_high, 2)) if exit_action == 'BUY' else max(_eod_fill, round(bar_low, 2))
+                        _release(sym, pos, _eod_fill, 'EOD_SQUAREOFF', bar_time)
+                        del positions[sym]
+                        logger.debug(f"  {sym} sq-off at {bar_dt.strftime('%H:%M')}")
                         continue
 
-                exit_price = None
-                exit_reason = None
+                    if self.trading_mode == 'DELIVERY' and self.min_hold_days > 0:
+                        days_held = (bar_dt.date() - pos['entry_date']).days
+                        if days_held < self.min_hold_days:
+                            continue
 
-                # Mirrors live's _check_reversal_exit: give the strategy that
-                # opened this position a chance to say "my setup is
-                # invalidated, get out now" ahead of target/SL. Evaluated on
-                # the full df_slice/ind_slice (not the trimmed min_bars_needed
-                # window) — same data shape _check_reversal_exit gets in live
-                # (the full df/ind passed into _check_signal).
-                _exit_fn = AVAILABLE_STRATEGY_EXITS.get(pos.get('strategy'))
-                if _exit_fn:
-                    try:
-                        _should_exit = _exit_fn(df_slice, ind_slice, pos)
-                    except Exception as e:
-                        logger.error(f"Strategy exit check error [{pos.get('strategy')}] {sym}: {e}")
-                        _should_exit = False
-                    if _should_exit:
-                        exit_price = self._slip(ltp, exit_action)
-                        exit_reason = 'STRATEGY_EXIT'
+                    exit_price = None
+                    exit_reason = None
 
-                if exit_price is None:
-                    # v10: mirror live's _update_trailing_stop call (same
-                    # position in the sequence: after reversal-exit, before
-                    # stoploss/target check) — previously backtest skipped
-                    # this entirely, so trades never got the breakeven-lock
-                    # or ATR trail live/paper trading actually applies.
-                    move_pct = (
-                        ((ltp - pos['entry_price']) / pos['entry_price'] * 100)
-                        if pos['side'] == 'BUY'
-                        else ((pos['entry_price'] - ltp) / pos['entry_price'] * 100)
+                    # Mirrors live's _check_reversal_exit: give the strategy that
+                    # opened this position a chance to say "my setup is
+                    # invalidated, get out now" ahead of target/SL. Evaluated on
+                    # the full df_slice/ind_slice (not the trimmed min_bars_needed
+                    # window) — same data shape _check_reversal_exit gets in live
+                    # (the full df/ind passed into _manage_open_position).
+                    _exit_fn = AVAILABLE_STRATEGY_EXITS.get(pos.get('strategy'))
+                    if _exit_fn:
+                        try:
+                            _should_exit = _exit_fn(df_slice, ind_slice, pos)
+                        except Exception as e:
+                            logger.error(f"Strategy exit check error [{pos.get('strategy')}] {sym}: {e}")
+                            _should_exit = False
+                        if _should_exit:
+                            exit_price = self._slip(ltp, exit_action)
+                            exit_reason = 'STRATEGY_EXIT'
+
+                    if exit_price is None:
+                        # v10: mirror live's _update_trailing_stop call (same
+                        # position in the sequence: after reversal-exit, before
+                        # stoploss/target check) — previously backtest skipped
+                        # this entirely, so trades never got the breakeven-lock
+                        # or ATR trail live/paper trading actually applies.
+                        move_pct = (
+                            ((ltp - pos['entry_price']) / pos['entry_price'] * 100)
+                            if pos['side'] == 'BUY'
+                            else ((pos['entry_price'] - ltp) / pos['entry_price'] * 100)
+                        )
+                        PaperTradingEngine._update_trailing_stop(self, pos, ltp, move_pct, bar_mins)
+
+                        if pos['side'] == 'BUY':
+                            if bar_low <= pos['stoploss']:
+                                exit_price = self._slip(pos['stoploss'], exit_action)
+                                exit_reason = 'STOP_LOSS'
+                            elif bar_high >= pos['target']:
+                                exit_price = self._slip(pos['target'], exit_action)
+                                exit_reason = 'TARGET'
+                        else:
+                            if bar_high >= pos['stoploss']:
+                                exit_price = self._slip(pos['stoploss'], exit_action)
+                                exit_reason = 'STOP_LOSS'
+                            elif bar_low <= pos['target']:
+                                exit_price = self._slip(pos['target'], exit_action)
+                                exit_reason = 'TARGET'
+
+                    if exit_price is not None:
+                        _release(sym, pos, exit_price, exit_reason, bar_time)
+                        del positions[sym]
+                        logger.debug(
+                            f"  {sym} {pos['side']} {exit_reason} hit at "
+                            f"{bar_dt.strftime('%Y-%m-%d %H:%M')} "
+                            f"(bar H={bar_high:.2f} L={bar_low:.2f}) "
+                            f"P&L={trades[-1]['pnl']:.2f}"
+                        )
+                    continue
+
+                if sym in pending_entries:
+                    # Already queued for fill on the next bar by an earlier
+                    # timestamp group in this same pass — don't re-evaluate.
+                    continue
+
+                # Mirrors live's _evaluate_entry_signal(), which — regardless
+                # of trading mode — refuses to evaluate a *new* entry in the
+                # first few minutes of the session (9:15-9:18, so
+                # indicators/opening range have bars to form) or once the
+                # market has closed:
+                #   if MARKET_OPEN <= mins < MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES: return
+                #   if mins >= MARKET_CLOSE: return
+                if bar_mins < PaperTradingEngine.MARKET_OPEN + PaperTradingEngine.NEW_ENTRY_WARMUP_MINUTES or bar_mins >= PaperTradingEngine.MARKET_CLOSE:
+                    continue
+                # NO_NEW_TRADES_AFTER (14:30 cutoff) and the 9:15-14:00 trade
+                # slot exist only to guarantee runway to square off an INTRADAY
+                # (MIS) position by 15:15 — Delivery/CNC has no forced
+                # square-off, so it may enter any time up to MARKET_CLOSE
+                # (matches live's _open_position_nolock, which only applies
+                # NO_NEW_TRADES_AFTER / _in_trade_slot when trading_mode ==
+                # 'INTRADAY').
+                if self.trading_mode == 'INTRADAY' and (
+                    bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER
+                    or not _in_trade_slot(bar_mins)
+                ):
+                    continue
+
+                # Mirrors live's cooldown (self.last_exit_time / COOLDOWN_MINUTES)
+                # — backtest was previously able to re-enter a symbol on the very
+                # next bar after closing it, which live never allows.
+                if sym in last_exit_time:
+                    was_reversal = last_exit_reason.get(sym) == 'STRATEGY_EXIT'
+                    cooldown_window = (
+                        PaperTradingEngine.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal
+                        else PaperTradingEngine.COOLDOWN_MINUTES
                     )
-                    PaperTradingEngine._update_trailing_stop(self, pos, ltp, move_pct, bar_mins)
+                    cooldown_elapsed = (bar_dt - last_exit_time[sym]).total_seconds() / 60
+                    if cooldown_elapsed < cooldown_window:
+                        continue
 
-                    if pos['side'] == 'BUY':
-                        if bar_low <= pos['stoploss']:
-                            exit_price = self._slip(pos['stoploss'], exit_action)
-                            exit_reason = 'STOP_LOSS'
-                        elif bar_high >= pos['target']:
-                            exit_price = self._slip(pos['target'], exit_action)
-                            exit_reason = 'TARGET'
-                    else:
-                        if bar_high >= pos['stoploss']:
-                            exit_price = self._slip(pos['stoploss'], exit_action)
-                            exit_reason = 'STOP_LOSS'
-                        elif bar_low <= pos['target']:
-                            exit_price = self._slip(pos['target'], exit_action)
-                            exit_reason = 'TARGET'
+                df_w, ind_w = _session_anchored_window(df_slice, ind_slice, min_bars_needed)
+                b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
+                vtot = b + s
+                buy_pct = (b / vtot * 100) if vtot > 0 else 50.0
+                sell_pct = (s / vtot * 100) if vtot > 0 else 50.0
 
-                if exit_price is not None:
-                    _release(sym, pos, exit_price, exit_reason, bar_time)
-                    del positions[sym]
+                vlc = vote_log_count.get(sym, 0)
+                if vlc < 60:
                     logger.debug(
-                        f"  {sym} {pos['side']} {exit_reason} hit at "
-                        f"{bar_dt.strftime('%Y-%m-%d %H:%M')} "
-                        f"(bar H={bar_high:.2f} L={bar_low:.2f}) "
-                        f"P&L={trades[-1]['pnl']:.2f}"
+                        f"  {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
+                        f"b={b:.1f} ({buy_pct:.0f}%)  s={s:.1f} ({sell_pct:.0f}%)"
                     )
-                continue
+                    vote_log_count[sym] = vlc + 1
 
-            if len(positions) >= max_open_pos:
-                continue
+                # NOTE: the MIN_VOTE_PCT panel gate, the regime filter
+                # (skip_breakout), the correlation filter (fighting NIFTY
+                # trend on a HEAVYWEIGHTS symbol), the gap-up/gap-down filter,
+                # and the _check_entry_quality() veto (volume surge, candle
+                # pattern, VWAP/RSI/EMA50 extension) that used to all sit in
+                # this block have been removed entirely. A strategy triggering
+                # (b/s >= 1.0) is now the ONLY condition — this mirrors the
+                # same change in PaperTradingEngine._evaluate_entry_signal(),
+                # so backtest results stay a faithful preview of live behavior.
+                buy_ok = b >= 1.0
+                sell_ok = s >= 1.0 and self.trading_mode != 'DELIVERY'
+                if buy_ok and sell_ok:
+                    # Same tiebreak as live: whichever side scores higher wins
+                    # when both directions independently qualify.
+                    if sell_pct > buy_pct:
+                        buy_ok = False
+                    else:
+                        sell_ok = False
 
-            # Mirrors live's _check_signal(), which — regardless of trading
-            # mode — refuses to evaluate a *new* entry in the first few
-            # minutes of the session (9:15-9:18, so indicators/opening
-            # range have bars to form) or once the market has closed:
-            #   if MARKET_OPEN <= mins < MARKET_OPEN+NEW_ENTRY_WARMUP_MINUTES: return
-            #   if mins >= MARKET_CLOSE: return
-            # Previously this whole window check was nested inside
-            # `self.trading_mode == 'INTRADAY'`, so a Delivery/CNC backtest
-            # could open a position at 9:16 AM or 3:29 PM — something live
-            # would always refuse no matter the mode.
-            if bar_mins < PaperTradingEngine.MARKET_OPEN + PaperTradingEngine.NEW_ENTRY_WARMUP_MINUTES or bar_mins >= PaperTradingEngine.MARKET_CLOSE:
-                continue
-            # NO_NEW_TRADES_AFTER (14:30 cutoff) and the 9:15-14:00 trade
-            # slot exist only to guarantee runway to square off an INTRADAY
-            # (MIS) position by 15:15 — Delivery/CNC has no forced
-            # square-off, so it may enter any time up to MARKET_CLOSE
-            # (matches live's _open_position_nolock, which only applies
-            # NO_NEW_TRADES_AFTER / _in_trade_slot when trading_mode ==
-            # 'INTRADAY').
-            if self.trading_mode == 'INTRADAY' and (
-                bar_mins >= PaperTradingEngine.NO_NEW_TRADES_AFTER
-                or not _in_trade_slot(bar_mins)
-            ):
-                continue
-
-            # Mirrors live's cooldown (self.last_exit_time / COOLDOWN_MINUTES)
-            # — backtest was previously able to re-enter a symbol on the very
-            # next bar after closing it, which live never allows.
-            if sym in last_exit_time:
-                was_reversal = last_exit_reason.get(sym) == 'STRATEGY_EXIT'
-                cooldown_window = (
-                    PaperTradingEngine.REVERSAL_EXIT_COOLDOWN_MINUTES if was_reversal
-                    else PaperTradingEngine.COOLDOWN_MINUTES
-                )
-                cooldown_elapsed = (bar_dt - last_exit_time[sym]).total_seconds() / 60
-                if cooldown_elapsed < cooldown_window:
+                side = None
+                if buy_ok:
+                    side = 'BUY'
+                elif sell_ok:
+                    side = 'SELL'
+                if side is None:
                     continue
 
-            df_w, ind_w = _session_anchored_window(df_slice, ind_slice, min_bars_needed)
-            b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
-            vtot = b + s
-            buy_pct = (b / vtot * 100) if vtot > 0 else 50.0
-            sell_pct = (s / vtot * 100) if vtot > 0 else 50.0
+                score = buy_pct if buy_ok else sell_pct
 
-            vlc = vote_log_count.get(sym, 0)
-            if vlc < 60:
+                # Determine which individual strategies actually triggered on
+                # this bar and pick a "best" one, mirroring live's
+                # direction_triggered/best_strategy logic. Purely for
+                # logging/labeling the trade — no longer used to gate
+                # anything.
+                all_triggered = []
+                for _name, _func in self.strategies_dict.items():
+                    try:
+                        if _func(df_w, ind_w):
+                            all_triggered.append(_name)
+                    except Exception:
+                        continue
+                direction_triggered = [
+                    n for n in all_triggered
+                    if AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH') in (side, 'BOTH')
+                ]
+                best_strategy = None
+                best_sc = -1
+                for _name in direction_triggered:
+                    _sc = 70 + len(direction_triggered) * 5
+                    if self._should_use_strategy(_name):
+                        _sc += 10
+                    if _sc > best_sc:
+                        best_sc = _sc
+                        best_strategy = _name
+                if not best_strategy:
+                    best_strategy = "VOTE_SIGNAL"
+
+                # Do NOT queue/fill yet. Collect this symbol as a candidate
+                # for THIS bar_time — every other symbol that also qualifies
+                # at this exact same timestamp gets compared below, and only
+                # the best-ranked candidate(s) — up to however many position
+                # slots are actually free — get queued for next-bar-open
+                # fill. This is the backtest mirror of live's scan-then-
+                # pick-best flow (_evaluate_entry_signal /
+                # _confirm_and_execute_best): a weaker signal that merely
+                # happened to sort earlier no longer silently wins over a
+                # stronger one at the same instant.
+                entry_candidates.append({
+                    'sym': sym, 'side': side, 'score': score,
+                    'strategy': best_strategy, 'signal_i': i,
+                    'signal_date': bar_dt.date(),
+                })
                 logger.debug(
-                    f"  {sym} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
-                    f"b={b:.1f} ({buy_pct:.0f}%)  s={s:.1f} ({sell_pct:.0f}%)"
+                    f"  {sym} {side} candidate on breakout candle @ {bar_dt.strftime('%Y-%m-%d %H:%M')} "
+                    f"(close={ltp:.2f}) score={score:.1f}  strategy={best_strategy}  b={b:.1f}  s={s:.1f}"
                 )
-                vote_log_count[sym] = vlc + 1
 
-            # NOTE: the MIN_VOTE_PCT panel gate, the regime filter
-            # (skip_breakout), the correlation filter (fighting NIFTY
-            # trend on a HEAVYWEIGHTS symbol), the gap-up/gap-down filter,
-            # and the _check_entry_quality() veto (volume surge, candle
-            # pattern, VWAP/RSI/EMA50 extension) that used to all sit in
-            # this block have been removed entirely. A strategy triggering
-            # (b/s >= 1.0) is now the ONLY condition — this mirrors the
-            # same change in PaperTradingEngine._check_signal(), so
-            # backtest results stay a faithful preview of live behavior.
-            buy_ok = b >= 1.0
-            sell_ok = s >= 1.0 and self.trading_mode != 'DELIVERY'
-            if buy_ok and sell_ok:
-                # Same tiebreak as live: whichever side scores higher wins
-                # when both directions independently qualify.
-                if sell_pct > buy_pct:
-                    buy_ok = False
-                else:
-                    sell_ok = False
-
-            side = None
-            if buy_ok:
-                side = 'BUY'
-            elif sell_ok:
-                side = 'SELL'
-            if side is None:
-                continue
-
-            # Determine which individual strategies actually triggered on
-            # this bar and pick a "best" one, mirroring live's
-            # direction_triggered/best_strategy logic in _check_signal().
-            # Purely for logging/labeling the trade now — no longer used
-            # to gate anything.
-            all_triggered = []
-            for _name, _func in self.strategies_dict.items():
-                try:
-                    if _func(df_w, ind_w):
-                        all_triggered.append(_name)
-                except Exception:
-                    continue
-            direction_triggered = [
-                n for n in all_triggered
-                if AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH') in (side, 'BOTH')
-            ]
-            best_strategy = None
-            best_sc = -1
-            for _name in direction_triggered:
-                _sc = 70 + len(direction_triggered) * 5
-                if self._should_use_strategy(_name):
-                    _sc += 10
-                if _sc > best_sc:
-                    best_sc = _sc
-                    best_strategy = _name
-            if not best_strategy:
-                best_strategy = "VOTE_SIGNAL"
-
-            # Do NOT fill on this bar. This bar (i) is the breakout candle
-            # — its close is what confirmed the signal, but that close
-            # price is already "in the past" by the time an order could
-            # realistically be placed. Queue the signal and fill it on the
-            # very next bar's OPEN instead (see the pending_entries check
-            # near the top of this loop). Sizing/target/stoploss are
-            # deliberately NOT computed here — they depend on the actual
-            # fill price, which isn't known until the next candle opens.
-            pending_entries[sym] = {
-                'side': side,
-                'strategy': best_strategy,
-                'signal_i': i,
-                'signal_date': bar_dt.date(),
-            }
-            logger.debug(
-                f"  {sym} {side} signal on breakout candle @ {bar_dt.strftime('%Y-%m-%d %H:%M')} "
-                f"(close={ltp:.2f}) — queued for fill on next candle's open  "
-                f"strategy={best_strategy}  b={b:.1f}  s={s:.1f}"
-            )
+            # End of this bar_time's symbol group: rank every candidate
+            # collected above and queue only the top-scoring one(s), up to
+            # the number of position slots actually free right now.
+            if entry_candidates:
+                entry_candidates.sort(key=lambda c: c['score'], reverse=True)
+                slots_free = max_open_pos - len(positions) - len(pending_entries)
+                for cand in entry_candidates[:max(0, slots_free)]:
+                    pending_entries[cand['sym']] = {
+                        'side': cand['side'],
+                        'strategy': cand['strategy'],
+                        'signal_i': cand['signal_i'],
+                        'signal_date': cand['signal_date'],
+                    }
+                    logger.debug(
+                        f"  {cand['sym']} {cand['side']} QUEUED (best-ranked of "
+                        f"{len(entry_candidates)} candidates @ {bar_dt.strftime('%Y-%m-%d %H:%M')}, "
+                        f"score={cand['score']:.1f}) — fill on next candle's open"
+                    )
 
         for sym, pos in list(positions.items()):
             df = symbol_data[sym]['df']
@@ -3892,7 +4040,7 @@ class BacktestEngine:
     def _fetch_nifty_context(self, kite, start, end):
         """One-time fetch of NIFTY 50 5-min history spanning the backtest
         date range, used to reproduce live's market_trend/market_regime
-        checks (see get_nifty_data() + _check_signal() in
+        checks (see get_nifty_data() + _evaluate_entry_signal() in
         PaperTradingEngine) without hitting the historical-data API on
         every single bar-event. Returns a DataFrame sorted by time with
         columns ['dt','change_pct','adx'], or None if the fetch fails —
@@ -3929,7 +4077,7 @@ class BacktestEngine:
     def _market_context_at(self, ctx, bar_dt):
         """Look up the NIFTY market_trend/market_regime as of the most
         recent NIFTY bar at or before bar_dt. Mirrors the thresholds in
-        PaperTradingEngine._check_signal() (change > 0.3% => BULLISH,
+        PaperTradingEngine._evaluate_entry_signal() (change > 0.3% => BULLISH,
         < -0.3% => BEARISH; ADX > 25 => TRENDING else RANGING)."""
         if ctx is None or ctx.empty:
             return None, None
@@ -4771,10 +4919,10 @@ def gen_paper_tab(pe):
         '<div class="pt-banner">'
         '<div style="font-size:20px;color:var(--gold);flex-shrink:0;padding-top:2px"><i class="fas fa-robot"></i></div>'
         '<div style="flex:1;min-width:0">'
-        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.8 — Strategy-Agnostic Scoring</div>'
+        '<div style="font-family:Space Mono,monospace;font-weight:700;font-size:12px;color:var(--gold)">PAPER TRADING v9.9 — Scan-Then-Pick-Best Entry Flow</div>'
         '<div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.5" id="bannerModeLine">'
         '80% wallet · Margin-based sizing · [' + mode_label + '] Target +' + str(round(pe.target_pct*100, 2)) + '% · SL -' + str(round(pe.stoploss_pct*100, 2)) + '% (Settings → Target &amp; Stop Loss) · ' + mode_window_txt + ' · '
-        'Strategy signal = direct entry (no panel gates)'
+        'Full-universe scan → best signal wins (no panel gates)'
         '</div></div>'
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;width:100%">'
         '<span class="b bg-gold" id="bannerUniverseBadge"><i class="fas fa-chart-line"></i> ' + str(len(NIFTY200_SYMBOLS)) + ' NIFTY 200</span>'
@@ -4807,13 +4955,15 @@ SYMBOL_MAP = {}
 def main():
     UserManager.load_users()
     print("\n" + "=" * 65)
-    print("  ALPHA SCANNER PRO  v9.8  — Strategy-Agnostic Scoring")
+    print("  ALPHA SCANNER PRO  v9.9  — Scan-Then-Pick-Best Entry Flow")
     print("=" * 65)
     print("  Visit http://<your-vps-ip>:5000 to login")
     print("  Redirect URL must be set to https://rahulintratrading.online/api/broker/callback")
     print("=" * 65)
     print("  🧠 Available strategies: " + ", ".join(AVAILABLE_STRATEGIES.keys()))
     print("  📈 All strategies use pure vote-based scoring (no strategy-specific panels)")
+    print("  🎯 Each cycle scans the FULL NIFTY 200, ranks every qualifying signal, and")
+    print("     only executes the best-ranked one(s) — same rule live and backtest both use.")
     print("  📊 Signal logs auto‑delete after 5000 entries.")
     print("=" * 65)
     app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
