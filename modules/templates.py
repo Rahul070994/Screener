@@ -596,6 +596,24 @@ fetch('/api/user/update-keys', {
 }
 
 // ─── BACKTEST TAB ─────────────────────────────────────────
+// Builds the "Running..." status line from a /api/backtest/status
+// response. The engine reports two phases: 'fetching' (downloading
+// historical data per symbol — usually quick) and 'simulating' (walking
+// the bar-by-bar event timeline — usually the much slower part). Before
+// this, the UI only ever showed fetch-phase progress, so once fetching
+// hit 100% the status line just froze with no feedback for however long
+// the simulation actually took (often several minutes for high-frequency
+// strategies / wide date ranges) — this makes the simulation phase's
+// progress and running trade count visible too.
+function _fmtBacktestProgress(d){
+    var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
+    var isSim = d.phase === 'simulating';
+    var phaseLabel = isSim ? 'Simulating' : 'Fetching data';
+    var unitLabel = isSim ? 'bars' : 'symbols';
+    var extra = (isSim && d.trades_done != null) ? ('  ·  ' + d.trades_done + ' trade' + (d.trades_done===1?'':'s') + ' so far') : '';
+    return '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> ' + phaseLabel + '... ' + d.done + '/' + d.total + ' ' + unitLabel + ' (' + pct + '%) — ' + (d.current || '') + extra + '</span>';
+}
+
 function renderPTBacktest(el) {
     var wallet = _backtestWallet || 100000;
     var fromDate = _backtestFromDate || '';
@@ -683,8 +701,7 @@ function renderPTBacktest(el) {
             _backtestRunning = true;
             if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...'; }
             if (status) {
-                var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
-                status.innerHTML = '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running... ' + d.done + '/' + d.total + ' symbols (' + pct + '%) — ' + (d.current || '') + '</span>';
+                status.innerHTML = _fmtBacktestProgress(d);
             }
             _pollBacktestStatus();
         } else if (d.status === 'done' && d.results && !_backtestResults) {
@@ -767,7 +784,7 @@ function _renderBacktestTradesPage(){
         var endIdx = pageSize === -1 ? total : Math.min(startIdx + pageSize, total);
         var pageTrades = trades.slice(startIdx, endIdx);
 
-        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>Target</th><th>SL</th><th>P&L</th><th>Reason</th></tr></thead><tbody>';
+        var html=modeBadge+'<table style="width:100%;font-size:11px;"><thead><tr><th>Symbol</th><th>Side</th><th>Entry Date/Time</th><th>Entry</th><th>Exit Date/Time</th><th>Exit</th><th>Held</th><th>Qty</th><th>Target</th><th>SL</th><th>P&L</th><th>Trade Place Reason</th><th>Reason</th></tr></thead><tbody>';
         pageTrades.forEach(t=>{
             var entryDt = new Date(t.entry_time);
             var exitDt = new Date(t.exit_time);
@@ -780,7 +797,8 @@ function _renderBacktestTradesPage(){
             }
             var tgtTxt = (t.target!=null) ? '₹'+Number(t.target).toFixed(2) : '—';
             var slTxt = (t.stoploss!=null) ? '₹'+Number(t.stoploss).toFixed(2) : '—';
-            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtBacktestDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtBacktestDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="num" style="color:var(--green-b)">${tgtTxt}</td><td class="num" style="color:var(--red-b)">${slTxt}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
+            var placeReasonTxt = t.trade_place_reason ? String(t.trade_place_reason).replace(/</g,'&lt;') : '—';
+            html+=`<tr><td class="sym">${t.symbol}</td><td><span class="b ${t.side==='BUY'?'bb':'bs'}">${t.side}</span></td><td class="num">${_fmtBacktestDateTime(t.entry_time)}</td><td class="num">₹${t.entry_price.toFixed(2)}</td><td class="num">${_fmtBacktestDateTime(t.exit_time)}</td><td class="num">₹${t.exit_price.toFixed(2)}</td><td class="num" style="color:var(--text3)">${heldTxt}</td><td class="num">${t.qty}</td><td class="num" style="color:var(--green-b)">${tgtTxt}</td><td class="num" style="color:var(--red-b)">${slTxt}</td><td class="${t.pnl>=0?'pos':'neg'}">${t.pnl>=0?'+':''}₹${t.pnl.toFixed(2)}</td><td style="max-width:260px;white-space:normal;font-size:10px;color:var(--text3)">${placeReasonTxt}</td><td><span class="b bg-gold">${t.exit_reason}</span></td></tr>`;
         });
         html+='</tbody></table>';
         tradesDiv.innerHTML=html;
@@ -898,8 +916,7 @@ function _pollBacktestStatus(){
             var runBtn = document.getElementById('backtestRunBtn');
             if (!status) { clearInterval(_backtestPollTimer); _backtestPollTimer = null; return; }
             if (d.status === 'running') {
-                var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
-                status.innerHTML = '<span style="color:var(--blue);"><i class="fas fa-spinner fa-spin"></i> Running... ' + d.done + '/' + d.total + ' symbols (' + pct + '%) — ' + (d.current || '') + '</span>';
+                status.innerHTML = _fmtBacktestProgress(d);
             } else if (d.status === 'done') {
                 clearInterval(_backtestPollTimer); _backtestPollTimer = null;
                 _backtestRunning = false;
@@ -1014,7 +1031,7 @@ fetch('/paper/trades').then(r=>r.json()).then(d=>{
     +'<div class="charges-row"><span>Gross P&L</span><span style="color:'+(tGross>=0?'var(--green)':'var(--red)')+'">₹'+tGross.toFixed(2)+'</span></div>'
     +'<div class="charges-row"><span>Total Charges</span><span style="color:var(--red)">-₹'+tChg.toFixed(2)+'</span></div>'
     +'<div class="charges-row '+(tNet>=0?'net-pos':'net-neg')+'"><span>NET P&L</span><span>'+(tNet>=0?'+':'')+'₹'+tNet.toFixed(2)+'</span></div></div>';
-    html+='<div class="tw">\n<table>\n<thead>\n<tr><th>Date</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Gross</th><th>Brok</th><th>STT</th><th>Exch</th><th>GST</th><th>Stamp</th><th>Total Chg</th><th>NET P&L</th><th>NET%</th><th>Reason</th></tr>\n</thead>\n<tbody>';
+    html+='<div class="tw">\n<table>\n<thead>\n<tr><th>Date</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Gross</th><th>Brok</th><th>STT</th><th>Exch</th><th>GST</th><th>Stamp</th><th>Total Chg</th><th>NET P&L</th><th>NET%</th><th>Trade Place Reason</th><th>Reason</th></tr>\n</thead>\n<tbody>';
     trades.forEach(t=>{
     var gc=t.gross_pnl>=0?'pos':'neg',nc=t.pnl>=0?'pos':'neg';
     html+='<tr><td class="num" style="font-size:10px">'+t.date+'</td><td class="sym">'+t.symbol+'</td>'
@@ -1031,6 +1048,7 @@ fetch('/paper/trades').then(r=>r.json()).then(d=>{
         +'<td class="num" style="color:var(--red);font-weight:700">₹'+Number(t.total_charges||0).toFixed(2)+'</td>'
         +'<td class="'+nc+'" style="font-weight:700">'+(t.pnl>=0?'+':'')+'₹'+Math.abs(t.pnl).toFixed(2)+'</td>'
         +'<td class="'+nc+'">'+(t.pnl_pct>=0?'+':'')+t.pnl_pct+'%</td>'
+        +'<td style="max-width:260px;white-space:normal;font-size:10px;color:var(--text3)">'+(t.trade_place_reason?String(t.trade_place_reason).replace(/</g,'&lt;'):'—')+'</td>'
         +'<td><span class="b bg-gold">'+t.exit_reason+'</span></td>'
         +'</tr>';
     });

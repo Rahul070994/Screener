@@ -50,6 +50,18 @@ STRATEGY_META = {}
 # strategy (e.g. EMA20/EMA50 flip) exists.
 STRATEGY_EXITS = {}
 STRATEGY_DIAGNOSTICS = {}
+# Optional per-strategy entry-reason functions: {strategy_name: fn(df, ind) -> str|None}.
+# Same shape/pattern as STRATEGY_DIAGNOSTICS/STRATEGY_EXITS above. A
+# strategy module MAY define a module-level `strategy_entry_reason` dict
+# mapping its function names to a callable that returns a short human-
+# readable string describing exactly which conditions were true when a
+# trade is placed (e.g. "3 consecutive 3-min candles green ..."). This is
+# entirely optional and additive — a strategy that doesn't define it just
+# contributes nothing here. ultimate_scanner.py calls this at the moment a
+# trade is OPENED (both live paper trading and backtest) and stores the
+# returned text onto that position/trade record — this is what powers the
+# "Trade Place Reason" column in the Trades tab and Backtest results table.
+STRATEGY_ENTRY_REASON = {}
 _STRATEGY_SOURCE_MODULE = {}
 # Tracks, per MODULE name, which priority level (and file path) actually won
 # registration — see _register_module's docstring for why this exists.
@@ -144,6 +156,7 @@ def _register_module(name, mod, file_path=None, priority=0):
     meta = getattr(mod, 'strategy_meta', {}) or {}
     diagnostics = getattr(mod, 'strategy_diagnostics', {}) or {}
     exits = getattr(mod, 'strategy_exits', {}) or {}
+    entry_reasons = getattr(mod, 'strategy_entry_reason', {}) or {}
     STRATEGY_REGISTRY[name] = all_strats
     for strat_name, fn in all_strats.items():
         if strat_name in _STRATEGY_SOURCE_MODULE and _STRATEGY_SOURCE_MODULE[strat_name] != name:
@@ -163,6 +176,12 @@ def _register_module(name, mod, file_path=None, priority=0):
                 print(f"⚠ Skipping strategy_exits['{strat_name}'] in '{name}': not callable")
             else:
                 STRATEGY_EXITS[strat_name] = exit_fn
+        entry_reason_fn = entry_reasons.get(strat_name)
+        if entry_reason_fn is not None:
+            if not callable(entry_reason_fn):
+                print(f"⚠ Skipping strategy_entry_reason['{strat_name}'] in '{name}': not callable")
+            else:
+                STRATEGY_ENTRY_REASON[strat_name] = entry_reason_fn
     print(f"✓ {name} imported successfully ({len(all_strats)} strategies)")
     return True
 

@@ -114,6 +114,13 @@ AVAILABLE_STRATEGY_DIAGNOSTICS = strategies.STRATEGY_DIAGNOSTICS
 # strategy module. strategies.py aggregates this the same way it aggregates
 # STRATEGY_META/STRATEGY_REGISTRY, so this is always present.
 AVAILABLE_STRATEGY_EXITS = strategies.STRATEGY_EXITS
+# Optional per-strategy entry-reason functions {strategy_name: fn(df, ind) -> str|None}
+# — see strategies.py's STRATEGY_ENTRY_REASON docstring. Called once, at the
+# moment a trade is actually opened (both live and backtest), and the
+# returned text is stored directly onto that position/trade record — this
+# is what powers the "Trade Place Reason" column in the Trades tab /
+# Backtest results table.
+AVAILABLE_STRATEGY_ENTRY_REASON = strategies.STRATEGY_ENTRY_REASON
 
 
 # ── Modules (code-organization refactor — see modules/ folder) ─────
@@ -892,11 +899,20 @@ def _strat_votes(df_slice, ind_slice, strategies_dict, strategy_performance=None
     b = 0.0
     s = 0.0
     total = 0
+    # NOTE: callers used to call every strategy function here for the vote
+    # tally, then call ALL of them again separately just to build a plain
+    # "which strategies fired" list (all_triggered) for logging/labeling.
+    # That doubled the number of strategy-function calls on every single
+    # bar/symbol, in both live scanning and backtesting. Returning the
+    # triggered names directly from this one pass removes that duplicate
+    # work entirely — see _evaluate_entry_signal / BacktestEngine.run().
+    triggered = []
     try:
         for name, func in strategies_dict.items():
             try:
                 if func(df_slice, ind_slice):
                     total += 1
+                    triggered.append(name)
                     meta = AVAILABLE_STRATEGY_META.get(name, {})
                     direction = meta.get('direction', 'BOTH')
                     pts = 5.0 if meta.get('high_trust') else 3.0
@@ -912,7 +928,46 @@ def _strat_votes(df_slice, ind_slice, strategies_dict, strategy_performance=None
                 logger.debug(f"Strategy vote error {name}: {e}")
     except Exception as e:
         logger.error(f"Strat votes error: {e}")
-    return b, s, total
+    return b, s, total, triggered
+
+def _pick_best_strategy(direction_triggered, should_use_fn, strategy_performance=None):
+    """Pick which single strategy name gets credited/labeled on a trade
+    when MULTIPLE enabled strategies triggered on the same bar for the
+    same side.
+
+    BUG THIS REPLACES: the old inline loop at both call sites computed
+        sc = 70 + len(direction_triggered) * 5
+        if should_use_fn(name): sc += 10
+    — `sc` does NOT depend on `name` at all except through the single
+    should_use_fn(name) boolean. So every triggered strategy that has the
+    same should_use_fn() result gets the exact SAME score, and because the
+    loop only overwrites best_strategy on strict `>` (not `>=`), the
+    "winner" was just whichever name happened to come FIRST in
+    all_triggered's iteration order (i.e. dict/registration order) — not
+    actually "best" by any real signal. That produces a misleading trade
+    log: a trade can get labeled under strategy A purely because A was
+    registered earlier than strategy B, even though B ALSO genuinely
+    fired on that same bar/side — so A's own rules can look like they
+    don't match the candles, when really B is what actually drove the
+    entry and A just won the tie by luck of ordering.
+
+    FIX: score each triggered candidate using signal actually specific to
+    it — high_trust flag and its live/backtest performance weight (win
+    rate) — and break any remaining tie deterministically by name so the
+    result is stable and explainable instead of order-dependent.
+    """
+    best_name = None
+    best_sc = None
+    for name in sorted(direction_triggered):
+        meta = AVAILABLE_STRATEGY_META.get(name, {})
+        sc = 5.0 if meta.get('high_trust') else 3.0
+        sc *= _strategy_perf_weight(name, strategy_performance)
+        if should_use_fn(name):
+            sc += 1.0
+        if best_sc is None or sc > best_sc:
+            best_sc = sc
+            best_name = name
+    return best_name
 
 def _get_strategy_min_bars(strategies_dict, fallback=160):
     seen_modules = set()
@@ -976,7 +1031,240 @@ def _get_strategy_timeframe(strategies_dict, fallback='3minute'):
     return next(iter(distinct))
 
 
-def _session_anchored_window(df, ind, min_bars_needed):
+def _get_strategy_session_anchor(strategies_dict, fallback=True):
+    """
+    Whether strategies loaded need their evaluation window anchored to the
+    start of the current trading session (e.g. ORB, which needs "the very
+    first candle of today" to stay in the window no matter how late in the
+    day it is — see _session_anchored_window below). Read directly off the
+    strategy module's own `SESSION_ANCHOR = True/False` constant, same
+    pattern as MIN_BARS_REQUIRED/TIMEFRAME above.
+
+    Strategies that only ever look at the last few bars (e.g.
+    momentum_scalp_strategy.py, which only reads the last 2-3 candles)
+    should declare SESSION_ANCHOR = False so their evaluation window stays
+    a small, constant-size trailing window all day, instead of silently
+    growing to include the entire day's bars so far purely because the
+    engine defaults to what ORB-style strategies need. This has a large
+    performance impact for high-frequency (e.g. 1-minute) strategies
+    scanned across the full universe, especially in a backtest.
+
+    Since a "strategy" selectable in Settings is always a single module's
+    whole `all_strategies` dict (see strategies.py's STRATEGY_REGISTRY,
+    keyed by module name), strategies_dict here only ever spans one
+    module in practice — but this still degrades gracefully if that ever
+    changes.
+    """
+    seen_modules = set()
+    found = {}
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'SESSION_ANCHOR', None)
+        if val is not None:
+            found[module_name] = bool(val)
+    if not found:
+        return fallback
+    return next(iter(found.values()))
+
+
+def _get_strategy_fill_mode(strategies_dict, fallback='next_open'):
+    """
+    How a confirmed backtest signal should actually be filled. Read
+    directly off the strategy module's own `FILL_AT_SIGNAL_CLOSE = True`
+    constant, same pattern as MIN_BARS_REQUIRED/TIMEFRAME/SESSION_ANCHOR
+    above.
+
+    'next_open' (the long-standing default, used whenever a strategy
+    module doesn't declare the flag at all): the signal bar's own close
+    is a breakout LEVEL, not a realistically-transactable price, so the
+    fill is queued and executed on the very next bar's OPEN instead —
+    see the `pending_entries` handling in BacktestEngine.run().
+
+    'signal_close': the strategy's own rule already includes whatever
+    waiting/confirmation it needs (e.g. momentum_scalp_strategy.py's
+    "wait 1 minute, then enter at that candle's close"), so the signal
+    bar's own close IS the intended entry price — re-queuing to the
+    following bar's open would silently add an extra, un-asked-for
+    minute of delay on top of the strategy's own wait.
+    """
+    seen_modules = set()
+    found = {}
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'FILL_AT_SIGNAL_CLOSE', None)
+        if val is not None:
+            found[module_name] = 'signal_close' if val else 'next_open'
+    if not found:
+        return fallback
+    return next(iter(found.values()))
+
+
+def _get_strategy_secondary_timeframe(strategies_dict, fallback=None):
+    """
+    Some strategies need a genuine SECOND timeframe alongside their
+    primary TIMEFRAME — e.g. momentum_scalp_strategy.py declares
+    TIMEFRAME = "minute" (for the exact 1-minute "wait candle" its rule
+    needs) but ALSO needs real, broker-native 3-minute candles for its
+    pattern check, rather than reconstructing them by resampling the
+    1-minute feed (which can diverge from a genuine 3-minute chart on
+    illiquid names/stretches where brokers synthesize missing 1-minute
+    ticks by carrying the last price forward as the next candle's open
+    — see momentum_scalp_strategy.py's module docstring for the live
+    trade that surfaced this).
+
+    Read directly off the strategy module's own
+    `SECONDARY_TIMEFRAME = "3minute"` constant, same pattern as
+    TIMEFRAME/MIN_BARS_REQUIRED/etc. Returns `fallback` (None by
+    default, meaning "no secondary fetch needed") if no loaded module
+    declares one — this is purely additive, existing single-timeframe
+    strategies are completely unaffected.
+    """
+    seen_modules = set()
+    found = {}
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'SECONDARY_TIMEFRAME', None)
+        if val is not None:
+            found[module_name] = val
+    if not found:
+        return fallback
+    distinct = set(found.values())
+    if len(distinct) > 1:
+        logger.warning(
+            f"Strategies declare different SECONDARY_TIMEFRAMEs {found} — "
+            f"using '{next(iter(distinct))}' for this scan."
+        )
+    return next(iter(distinct))
+
+
+def _get_strategy_secondary_min_bars(strategies_dict, fallback=20):
+    """Same pattern as _get_strategy_min_bars, but for the optional
+    SECONDARY_TIMEFRAME feed (see _get_strategy_secondary_timeframe) —
+    read off each loaded module's own `SECONDARY_MIN_BARS_REQUIRED`."""
+    seen_modules = set()
+    best = None
+    for fn in strategies_dict.values():
+        module_name = getattr(fn, '__module__', '') or ''
+        if not module_name or module_name in seen_modules:
+            continue
+        seen_modules.add(module_name)
+        module_obj = sys.modules.get(module_name)
+        if module_obj is None:
+            continue
+        val = getattr(module_obj, 'SECONDARY_MIN_BARS_REQUIRED', None)
+        if val is not None:
+            best = val if best is None else max(best, val)
+    return best if best is not None else fallback
+
+
+def _attach_native_secondary_df(ind_w, native_df):
+    """Stash the secondary-timeframe dataframe (real, broker-native
+    candles — see _get_strategy_secondary_timeframe) onto the indicator
+    window that's about to be handed to strategy functions, via
+    DataFrame.attrs. This is a side channel, not a new column,
+    deliberately: it's a whole separate OHLC series a strategy can
+    optionally read (see momentum_scalp_strategy.py's _evaluate()), not
+    a per-row indicator value. Strategies that don't declare
+    SECONDARY_TIMEFRAME never look at this and are completely
+    unaffected. Set directly on the exact `ind_w` object passed to the
+    strategy call (never relied on to survive further pandas slicing),
+    so there's no dependency on DataFrame.attrs propagation semantics.
+    """
+    try:
+        ind_w.attrs['native_secondary_df'] = native_df
+    except Exception:
+        pass
+    return ind_w
+
+
+def _secondary_bars_closed_by(secondary_df, cutoff_dt, secondary_timeframe):
+    """Return only the rows of `secondary_df` (native secondary-timeframe
+    candles) whose OWN bar has genuinely finished by `cutoff_dt` — i.e.
+    bar-start-time + timeframe-minutes <= cutoff_dt.
+
+    This exists purely for the backtest engine: symbol_data there is
+    fetched ONCE up front for a whole date range for performance, so
+    without this truncation a strategy reading
+    ind.attrs['native_secondary_df'] at simulated bar-event `i` could
+    see 3-minute (or whatever) candles that haven't actually closed yet
+    as of that point in simulated time — a classic look-ahead bug. Live
+    scanning never needs this: kite.historical_data() + the existing
+    _drop_forming_candle() already only ever return bars that are
+    genuinely closed relative to real wall-clock 'now', so live callers
+    pass the freshly-fetched secondary df straight through unfiltered.
+    """
+    if secondary_df is None or len(secondary_df) == 0 or 'date' not in secondary_df.columns:
+        return secondary_df
+    minutes_per_bar = {
+        'minute': 1, '3minute': 3, '5minute': 5, '10minute': 10,
+        '15minute': 15, '30minute': 30, '60minute': 60,
+    }.get(secondary_timeframe, 3)
+    try:
+        dt = pd.to_datetime(secondary_df['date'])
+        bar_close = dt + pd.Timedelta(minutes=minutes_per_bar)
+        cutoff = pd.Timestamp(cutoff_dt)
+        series_tz = getattr(dt.dt, 'tz', None)
+        if series_tz is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize(series_tz)
+        elif series_tz is None and cutoff.tzinfo is not None:
+            cutoff = cutoff.tz_localize(None)
+        return secondary_df.loc[(bar_close <= cutoff).values].reset_index(drop=True)
+    except Exception:
+        return secondary_df.iloc[0:0]
+
+
+def _precompute_session_start_positions(dt_series):
+    """
+    Precompute, for every bar position i in a symbol's full history, the
+    index of the first bar belonging to the SAME trading day as bar i —
+    once, up front, in a single O(n) pass per symbol.
+
+    This exists purely for BacktestEngine.run()'s per-bar-event loop.
+    Previously, anchoring each bar's strategy-evaluation window to its own
+    session start meant re-deriving "which bar is the start of today" from
+    scratch (via pd.to_datetime()/day-boundary comparisons) on a
+    freshly-sliced, growing DataFrame at EVERY single bar-event — for a
+    full-universe backtest that's O(bars_per_day) per event, times
+    O(bars_per_day) events per symbol per day, times ~200 symbols: the
+    dominant cost of a full-universe single-day backtest. Doing it once
+    per symbol here turns that into an O(1) array lookup per bar-event
+    instead (see BacktestEngine.run()'s use of sd['session_start_idx']).
+    """
+    try:
+        days = pd.to_datetime(dt_series).dt.date.values
+    except Exception:
+        # Can't determine day boundaries — fall back to "each bar anchors
+        # to itself" (equivalent to no session anchoring for this symbol).
+        return np.arange(len(dt_series))
+    n = len(days)
+    starts = np.zeros(n, dtype=np.int64)
+    cur_start = 0
+    for k in range(n):
+        if days[k] != days[cur_start]:
+            cur_start = k
+        starts[k] = cur_start
+    return starts
+
+
+def _session_anchored_window(df, ind, min_bars_needed, anchor_enabled=True):
     """Build the (df_w, ind_w) window handed to strategy functions.
 
     The old approach everywhere in this file was a blind trailing slice:
@@ -1005,6 +1293,18 @@ def _session_anchored_window(df, ind, min_bars_needed):
     """
     if len(df) == 0:
         return df, ind
+    if not anchor_enabled:
+        # Strategy module declared SESSION_ANCHOR = False (see
+        # _get_strategy_session_anchor) — it has no need for "the first
+        # candle of today," so skip the day-boundary lookup entirely and
+        # always return a fixed-size trailing window. This is both faster
+        # (no date parsing) and correctly bounded for high-frequency
+        # strategies (e.g. momentum_scalp_strategy.py) that would otherwise
+        # get handed a window that silently grows all day.
+        n = len(df)
+        start = max(0, n - min_bars_needed)
+        return (df.iloc[start:].reset_index(drop=True),
+                ind.iloc[start:].reset_index(drop=True))
     if 'date' not in df.columns:
         # No date column to anchor on — fall back to the old trailing
         # window rather than guessing.
@@ -1751,6 +2051,23 @@ class PaperTradingEngine:
         return ep, 'STRATEGY_EXIT'
 
     def _check_stop_loss_target(self, symbol, pos, df, ltp):
+        # A strategy module can declare, in its strategy_meta entry,
+        # 'ignore_flat_sl_target': True to opt its positions OUT of this
+        # flat target_pct/stoploss_pct check entirely — meaning the ONLY
+        # thing that can ever close that position is the strategy's own
+        # strategy_exits function (see _check_reversal_exit above, which
+        # always runs first regardless). Without this flag, EVERY strategy
+        # falls back to this flat check whenever its own exit function
+        # returns False/None — there was previously no way for a strategy
+        # to opt out of that fallback, so a strategy meaning to manage its
+        # own exits completely (e.g. a charges-aware profit-booking
+        # scalper) could still get closed by the flat stoploss_pct/
+        # target_pct on the LOSING side even though it never wanted the
+        # flat check involved at all. This is an explicit, per-strategy
+        # opt-in — every other strategy's behavior is unchanged.
+        _meta = AVAILABLE_STRATEGY_META.get(pos.get('strategy'), {})
+        if _meta.get('ignore_flat_sl_target'):
+            return None, None
         entry = pos['entry_price']
         side = pos['side']
         target = pos.get('target')
@@ -2008,162 +2325,18 @@ class PaperTradingEngine:
                 sl = round(price * (1.0 + self.stoploss_pct), 2)
         return tgt, sl
     
-    def _check_entry_quality(self, df, ind, side, symbol, strategy_name=None):
-        try:
-            price = float(df['close'].iloc[-1])
-            open_ = float(df['open'].iloc[-1])
-            high_ = float(df['high'].iloc[-1])
-            low_ = float(df['low'].iloc[-1])
-            now = datetime.now()
-            now_mins = now.hour * 60 + now.minute
-
-            meta = AVAILABLE_STRATEGY_META.get(strategy_name, {})
-            category = meta.get('category', 'default')
-            skip_extension_checks = category in ('breakout', 'momentum')
-            # skip_quality_checks: some strategies (e.g. a pure EMA20/EMA50
-            # momentum-confirmation strategy) declare in their own
-            # strategy_meta that NOTHING besides their own entry logic
-            # should gate them — no volume-surge requirement, no
-            # candle-reversal veto. Previously the volume-surge check and
-            # candle-pattern veto below ran unconditionally for every
-            # strategy regardless of category, which silently rejected
-            # 100% of that strategy's signals (they'd log as fired, but
-            # never actually open a position) even though its category
-            # already exempted it from the VWAP/RSI/EMA50 checks further
-            # down. Honor the flag before running ANY of the checks.
-            if meta.get('skip_quality_checks'):
-                return True, None
-
-            def _iv(key, fallback=0.0):
-                try:
-                    v = float(ind[key].iloc[-1])
-                    return fallback if (isinstance(v, float) and np.isnan(v)) else v
-                except Exception:
-                    return fallback
-            ema50 = _iv('ema_50', price)
-            rsi = _iv('rsi', 50.0)
-            vwap = _iv('vwap', 0.0)
-            vwap_u1 = _iv('vwap_upper1', price * 1.02)
-            vwap_l1 = _iv('vwap_lower1', price * 0.98)
-            roc5 = _iv('roc5', 0.0)
-            htf_bull = _iv('htf_bull', 0.5)
-            atr = _iv('atr', 0.0)
-            avg_vol = float(df['volume'].iloc[-10:].mean()) if len(df) >= 10 else float(df['volume'].mean())
-            cur_vol = float(df['volume'].iloc[-1])
-            vol_mult = 1.0 if now_mins < 10*60 else 0.5 if now_mins < 13*60 else 0.4
-            if cur_vol < avg_vol * vol_mult:
-                return False, (f"Low volume {int(cur_vol):,} < "
-                            f"{int(avg_vol * vol_mult):,} "
-                            f"({vol_mult}x avg)")
-            if cur_vol < avg_vol * self.MIN_VOL_SURGE:
-                return False, (f"Volume surge insufficient: {cur_vol/avg_vol:.1f}x < {self.MIN_VOL_SURGE}x")
-
-            def _candle_patterns(df_slice):
-                cp = {}
-                try:
-                    n = len(df_slice) - 1
-                    c = float(df_slice['close'].iloc[n])
-                    o = float(df_slice['open'].iloc[n])
-                    h = float(df_slice['high'].iloc[n])
-                    l = float(df_slice['low'].iloc[n])
-                    rng = max(h - l, 1e-9)
-                    body = abs(c - o)
-                    body_r = body / rng
-                    uw_r = (h - max(c, o)) / rng
-                    lw_r = (min(c, o) - l) / rng
-                    bull = c >= o
-                    bear = c < o
-                    cp['DOJI'] = body_r < 0.10
-                    cp['SPINNING_TOP'] = (0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25)
-                    cp['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
-                    cp['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
-                    cp['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
-                    cp['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
-                    cp['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
-                    cp['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
-                    if n >= 1:
-                        pc = float(df_slice['close'].iloc[n-1])
-                        po = float(df_slice['open'].iloc[n-1])
-                        ph = float(df_slice['high'].iloc[n-1])
-                        pl = float(df_slice['low'].iloc[n-1])
-                        pbull = pc > po
-                        pbear = pc < po
-                        pb = abs(pc - po)
-                        pm = (po + pc) / 2.0
-                        cp['BULL_ENGULFING'] = (pbear and bull and o <= pc and c >= po and body >= pb)
-                        cp['BEAR_ENGULFING'] = (pbull and bear and o >= pc and c <= po and body >= pb)
-                        cp['PIERCING_LINE'] = (pbear and bull and o < pl and c > pm and c < po)
-                        cp['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < pm and c > pc)
-                        cp['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
-                        cp['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
-                    if n >= 2:
-                        c2 = float(df_slice['close'].iloc[n-2])
-                        o2 = float(df_slice['open'].iloc[n-2])
-                        c1 = float(df_slice['close'].iloc[n-1])
-                        o1 = float(df_slice['open'].iloc[n-1])
-                        h1 = float(df_slice['high'].iloc[n-1])
-                        l1 = float(df_slice['low'].iloc[n-1])
-                        rng1 = max(h1 - l1, 1e-9)
-                        body1 = abs(c1 - o1) / rng1
-                        mid2 = (o2 + c2) / 2.0
-                        cp['MORNING_STAR'] = (c2 < o2 and body1 < 0.30 and bull and c > mid2)
-                        cp['EVENING_STAR'] = (c2 > o2 and body1 < 0.30 and bear and c < mid2)
-                        cp['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50)
-                        cp['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50)
-                except Exception as e:
-                    logger.debug(f"_candle_patterns error: {e}")
-                return cp
-            cp = _candle_patterns(df)
-            if side == 'BUY':
-                bearish_veto = ['SHOOTING_STAR','EVENING_STAR','BEAR_ENGULFING','DARK_CLOUD_COVER','HANGING_MAN','THREE_BLACK_CROWS','BEAR_MARUBOZU','TWEEZER_TOP']
-                triggered = [p for p in bearish_veto if cp.get(p)]
-                if triggered:
-                    return False, (f"Bearish candle pattern on trigger bar: {', '.join(triggered)}")
-            if side == 'SELL':
-                bullish_veto = ['HAMMER','MORNING_STAR','BULL_ENGULFING','PIERCING_LINE','INVERTED_HAMMER','THREE_WHITE_SOLDIERS','BULL_MARUBOZU','TWEEZER_BOTTOM']
-                triggered = [p for p in bullish_veto if cp.get(p)]
-                if triggered:
-                    return False, (f"Bullish candle pattern on trigger bar: {', '.join(triggered)}")
-
-            if not skip_extension_checks:
-                if side == 'BUY':
-                    if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
-                        return False, (f"Price extended above VWAP+1σ ({price:.2f} > {vwap_u1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
-                    if atr > 0 and vwap > 0 and (price - vwap) > 2.0 * atr:
-                        return False, (f"Price > 2×ATR above VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late long entry")
-                if side == 'SELL':
-                    if vwap_l1 > 0 and price < vwap_l1 and roc5 < -1.5:
-                        return False, (f"Price extended below VWAP-1σ ({price:.2f} < {vwap_l1:.2f}) with ROC5={roc5:.1f}% — likely exhausted")
-                    if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
-                        return False, (f"Price > 2×ATR below VWAP ({price:.2f} vs VWAP {vwap:.2f}, ATR {atr:.2f}) — late short entry")
-                if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
-                    return False, (f"Overbought — RSI {rsi:.1f} > 72 and HTF bull strength {htf_bull:.2f} > 0.85 (chasing a tired move)")
-                if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
-                    return False, (f"Oversold — RSI {rsi:.1f} < 28 and HTF bull {htf_bull:.2f} < 0.15 (shorting into exhaustion)")
-                if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
-                    return False, (f"BUY price {price:.2f} is >2% below EMA50 {ema50:.2f} — counter-trend long")
-                if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
-                    return False, (f"SELL price {price:.2f} is >2% above EMA50 {ema50:.2f} — counter-trend short")
-                if side == 'BUY' and rsi > 75:
-                    return False, f"BUY into overbought RSI {rsi:.1f} > 75"
-                if side == 'SELL' and rsi < 25:
-                    return False, f"SELL into oversold RSI {rsi:.1f} < 25"
-                if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
-                    return False, (f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing the move down")
-
-            return True, None
-        except Exception as e:
-            logger.error(f"Entry quality error {symbol}: {e}")
-            return True, None
-    
     def _open_position_nolock(self, symbol, side, price, reason='SIGNAL',
                              signal_score=None, strategy_name=None, atr=None,
-                             df=None, ind=None, log_entry=None):
+                             df=None, ind=None, log_entry=None,
+                             trade_place_reason=None):
         # NOTE: `atr` is accepted for call-site compatibility (callers still
-        # compute it for other purposes, e.g. _check_entry_quality's VWAP
-        # extension checks) but is NOT used here — target/SL sizing below
-        # comes entirely from _calculate_atr_targets(), which is purely
-        # target_pct/stoploss_pct based. No ATR anywhere in entry sizing.
+        # compute it for logging/diagnostics elsewhere) but is NOT used
+        # here — target/SL sizing below comes entirely from
+        # _calculate_atr_targets(), which is purely target_pct/stoploss_pct
+        # based. No ATR anywhere in entry sizing. The engine no longer runs
+        # any post-signal quality veto (volume-surge/candle-pattern/VWAP-
+        # extension) at all — a strategy module's own signal is the sole
+        # source of truth for whether an entry is valid; see strategies.py.
         def _block(msg):
             logger.info(f"BLOCKED {symbol}: {msg}")
             if log_entry is not None:
@@ -2267,6 +2440,7 @@ class PaperTradingEngine:
             'leverage': round(1 / margin_pct, 2) if margin_pct > 0 else 5.0,
             'margin_source': margin_source,
             'entry_slip_pct': actual_slip_pct,
+            'trade_place_reason': trade_place_reason,
         }
         self.data['positions'][symbol] = pos
         self.active_stock_orders[symbol] = now
@@ -2325,6 +2499,7 @@ class PaperTradingEngine:
             'pnl_pct': round(net_pnl / (entry * qty) * 100, 2) if entry * qty > 0 else 0,
             'exit_reason': reason,
             'strategy': strategy_name,
+            'trade_place_reason': pos.get('trade_place_reason'),
             **{k: v for k, v in chg.items() if k in ['brokerage', 'stt', 'exchange_charge', 'gst', 'stamp_duty', 'total_charges']}
         }
         self.data['trades'].append(trade)
@@ -2681,6 +2856,38 @@ class PaperTradingEngine:
             df = pd.DataFrame(data5)
             ind = Indicators.calculate_all(df)
 
+            # Optional SECOND, genuinely-native timeframe fetch (see
+            # _get_strategy_secondary_timeframe) — e.g.
+            # momentum_scalp_strategy.py needs real 3-minute candles for
+            # its pattern check, not a resample of the 1-minute `df`
+            # above. Fetched straight from Kite at that resolution, so
+            # what the strategy sees is exactly what a native 3-minute
+            # chart would show, instead of a reconstruction that can
+            # diverge from it on illiquid stretches.
+            secondary_timeframe = _get_strategy_secondary_timeframe(self.strategies_dict)
+            native_secondary_df = None
+            if secondary_timeframe:
+                try:
+                    secondary_min_bars = _get_strategy_secondary_min_bars(self.strategies_dict)
+                    secondary_lookback_days = _lookback_days(secondary_timeframe, secondary_min_bars)
+                    _hist_limiter.wait(f"{secondary_timeframe} {symbol}")
+                    data_secondary = kite.historical_data(
+                        SYMBOL_MAP[symbol]["token"],
+                        now - timedelta(days=secondary_lookback_days),
+                        now,
+                        secondary_timeframe,
+                    )
+                    data_secondary = _drop_forming_candle(data_secondary, secondary_timeframe, now)
+                    if data_secondary:
+                        native_secondary_df = pd.DataFrame(data_secondary)
+                except Exception as e:
+                    logger.warning(
+                        f"{symbol}: secondary-timeframe ({secondary_timeframe}) fetch "
+                        f"failed — strategies that require it will simply not fire "
+                        f"this cycle: {e}"
+                    )
+                    native_secondary_df = None
+
             ltp_initial = (
                 prefetched_ltp
                 if prefetched_ltp is not None
@@ -2706,9 +2913,16 @@ class PaperTradingEngine:
 
             avg_vol = float(df["volume"].iloc[-20:].mean())
 
-            df_w, ind_w = _session_anchored_window(df, ind, min_bars_needed)
+            _anchor_enabled = _get_strategy_session_anchor(self.strategies_dict)
+            df_w, ind_w = _session_anchored_window(df, ind, min_bars_needed, anchor_enabled=_anchor_enabled)
+            if native_secondary_df is not None:
+                # Live 'now' is always the real wall clock, and the fetch
+                # above already stripped the still-forming candle, so no
+                # further leak-safety truncation is needed here (unlike
+                # the backtest path — see _secondary_bars_closed_by).
+                _attach_native_secondary_df(ind_w, native_secondary_df)
 
-            strat5_b, strat5_s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
+            strat5_b, strat5_s, _, all_triggered = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
             st5_total = strat5_b + strat5_s
             s5_buy_pct = strat5_b / st5_total * 100 if st5_total > 0 else 50.0
             s5_sel_pct = strat5_s / st5_total * 100 if st5_total > 0 else 50.0
@@ -2734,14 +2948,6 @@ class PaperTradingEngine:
                 else:
                     sell_ok = False
 
-            all_triggered = []
-            for name, func in self.strategies_dict.items():
-                try:
-                    if func(df_w, ind_w):
-                        all_triggered.append(name)
-                except Exception:
-                    continue
-
             direction_triggered = [
                 n for n in all_triggered
                 if (lambda _dir: (
@@ -2751,18 +2957,25 @@ class PaperTradingEngine:
                 ))(AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH'))
             ]
 
-            best_strategy = None
-            best_sc = -1
-            for name in direction_triggered:
-                sc = 70 + len(direction_triggered) * 5
-                if self._should_use_strategy(name):
-                    sc += 10
-                if sc > best_sc:
-                    best_sc = sc
-                    best_strategy = name
+            best_strategy = _pick_best_strategy(
+                direction_triggered, self._should_use_strategy, self.strategy_performance
+            )
 
             if not best_strategy and (buy_ok or sell_ok):
                 best_strategy = "VOTE_SIGNAL"
+
+            # What actual conditions this trade would be placed under —
+            # see AVAILABLE_STRATEGY_ENTRY_REASON / strategy_entry_reason
+            # docstrings. Computed here (against the same df_w/ind_w window
+            # the strategy just voted on) so it reflects exactly what was
+            # true at signal time, not recomputed later against stale data.
+            trade_place_reason = None
+            _reason_fn = AVAILABLE_STRATEGY_ENTRY_REASON.get(best_strategy)
+            if _reason_fn:
+                try:
+                    trade_place_reason = _reason_fn(df_w, ind_w)
+                except Exception as e:
+                    logger.debug(f"Entry-reason error {best_strategy} {symbol}: {e}")
 
             atr = float(ind["atr"].iloc[-1]) if "atr" in ind.columns else None
 
@@ -2794,6 +3007,7 @@ class PaperTradingEngine:
                 "strategy_data": strategy_data,
                 "best_strategy": best_strategy,
                 "strategy_mode": f"NATIVE ({self.strategy_name})",
+                "trade_place_reason": trade_place_reason,
             }
 
             try:
@@ -2873,6 +3087,7 @@ class PaperTradingEngine:
                 'ind': ind,
                 'log_entry': log_entry,
                 'slot_label': _current_slot_lbl,
+                'trade_place_reason': trade_place_reason,
             }
 
         except Exception as e:
@@ -2955,6 +3170,7 @@ class PaperTradingEngine:
             symbol, side, fresh_ltp, f"ALGO_{side}",
             round(candidate['score'], 1), candidate['strategy'], candidate['atr'],
             candidate['df'], candidate['ind'], log_entry,
+            trade_place_reason=candidate.get('trade_place_reason'),
         )
         if result is None:
             for lg in self._signal_logs:
@@ -3396,6 +3612,12 @@ class BacktestEngine:
             'done': 0,
             'total': 0,
             'current': '',
+            # 'fetching' (downloading historical data per symbol) or
+            # 'simulating' (walking the bar-by-bar event timeline — this is
+            # normally the much slower phase and previously reported NO
+            # progress at all, so the UI just froze on "100% / Running...").
+            'phase': '',
+            'trades_done': 0,
             'results': None,
             'error': None,
         }
@@ -3543,7 +3765,7 @@ class BacktestEngine:
         for _sym_idx, sym in enumerate(stock_universe):
             if progress_cb:
                 try:
-                    progress_cb(done=_sym_idx, total=total_syms, current=sym)
+                    progress_cb(phase='fetching', done=_sym_idx, total=total_syms, current=sym)
                 except Exception:
                     pass
 
@@ -3593,10 +3815,78 @@ class BacktestEngine:
                 import traceback
                 logger.error(traceback.format_exc())
 
+        # Optional SECOND, genuinely-native timeframe fetch (see
+        # _get_strategy_secondary_timeframe) — e.g.
+        # momentum_scalp_strategy.py needs real 3-minute candles for its
+        # pattern check, fetched straight from Kite at that resolution,
+        # not resampled from the 1-minute `strat_timeframe` data fetched
+        # above (a v4 backtest reproduced a real live discrepancy this
+        # way — see that module's docstring). One fetch per symbol,
+        # spanning the same warm-up-padded date range as the primary
+        # fetch; per-bar-event leak-safety truncation happens below via
+        # _secondary_bars_closed_by, since this fetch is done once up
+        # front for the whole range.
+        secondary_timeframe = _get_strategy_secondary_timeframe(self.strategies_dict)
+        secondary_data = {}
+        if secondary_timeframe:
+            secondary_min_bars = _get_strategy_secondary_min_bars(self.strategies_dict)
+            # Size the secondary fetch window from the secondary
+            # timeframe's OWN min-bars requirement — do not just assume
+            # the primary fetch_start (sized for strat_timeframe /
+            # min_bars_needed) already covers enough history for this
+            # different timeframe. Take whichever start is further back,
+            # so the secondary fetch always has enough native bars
+            # regardless of how the two requirements compare.
+            secondary_lookback_days = _lookback_days(secondary_timeframe, secondary_min_bars)
+            secondary_fetch_start = min(fetch_start, start - timedelta(days=secondary_lookback_days))
+            logger.info(
+                f"Secondary timeframe set to {secondary_timeframe} (native fetch, "
+                f"NOT resampled from {strat_timeframe}) — from strategy module's own "
+                f"SECONDARY_TIMEFRAME setting; fetching from {secondary_fetch_start}"
+            )
+            for sym in symbol_data.keys():
+                token = symbol_map[sym]['token']
+                try:
+                    data_sec = _fetch_historical_chunked(
+                        kite, token, secondary_fetch_start, end, secondary_timeframe,
+                        _hist_limiter, tag=f"backtest-secondary {sym}",
+                    )
+                    data_sec = _drop_forming_candle(data_sec, secondary_timeframe, datetime.now())
+                    if data_sec:
+                        secondary_data[sym] = pd.DataFrame(data_sec)
+                        logger.debug(f"Secondary fetch {sym}: {len(data_sec)} native {secondary_timeframe} bars")
+                    else:
+                        logger.debug(f"Secondary fetch {sym}: 0 native {secondary_timeframe} bars returned")
+                except Exception as e:
+                    logger.error(f"Backtest secondary-timeframe fetch error on {sym}: {e}")
+
+        session_anchor_enabled = _get_strategy_session_anchor(self.strategies_dict)
+        logger.info(
+            "Session-anchor mode: %s",
+            "ON (window anchored to session start — default, or a loaded "
+            "strategy needs it, e.g. ORB)" if session_anchor_enabled else
+            "OFF (fixed small trailing window — strategy module declared "
+            "SESSION_ANCHOR = False, e.g. momentum_scalp_strategy.py)"
+        )
+
+        # See _get_strategy_fill_mode's docstring. 'signal_close' skips the
+        # default next-bar-open queueing entirely and fills right on the
+        # signal bar's own close instead (momentum_scalp_strategy.py's
+        # "wait 1 minute, entry = that candle's close" rule already bakes
+        # in its own wait, so the engine must not add a second one).
+        fill_mode = _get_strategy_fill_mode(self.strategies_dict)
+        logger.info(f"Fill mode: {fill_mode} (from strategy module's own FILL_AT_SIGNAL_CLOSE setting)")
+
         events = []
         _min_idx = max(0, min_bars_needed - 1)
         for sym, sd in symbol_data.items():
             dt_series = sd['dt']
+            # Precomputed ONCE per symbol here (O(n)) instead of being
+            # re-derived from scratch on every single bar-event inside the
+            # main simulation loop below (which was effectively O(n^2) per
+            # symbol per day and the dominant cost of a full-universe
+            # backtest — see _precompute_session_start_positions).
+            sd['session_start_idx'] = _precompute_session_start_positions(dt_series)
             # Match tz-awareness between the user's requested `start` and
             # this symbol's bar timestamps before comparing (Kite returns
             # tz-aware IST timestamps; `start` parsed from a plain date
@@ -3624,6 +3914,21 @@ class BacktestEngine:
         )
 
         vote_log_count = {}
+        # Distinct bar-timestamps to walk — this is the real unit of work
+        # for the simulation phase (which is normally far slower than the
+        # data-fetch phase above, but previously reported NO progress at
+        # all once fetching finished, so the UI just froze on "Running..."
+        # for however many minutes the simulation took).
+        total_bar_groups = len({e[0] for e in events}) or 1
+        processed_groups = 0
+        _last_progress_ts = time.time()
+        if progress_cb:
+            try:
+                progress_cb(phase='simulating', done=0, total=total_bar_groups,
+                            current='Starting simulation...', trades_done=0)
+            except Exception:
+                pass
+
         # Grouped by identical bar timestamp (events is already sorted by
         # (bar_time, sym), so groupby just buckets consecutive matching
         # timestamps together). This mirrors live\'s scan-then-pick-best
@@ -3650,12 +3955,23 @@ class BacktestEngine:
             for _, sym, i in group:
                 sd = symbol_data[sym]
                 df, ind, dt_series = sd['df'], sd['ind'], sd['dt']
-                df_slice = df.iloc[:i+1]
-                ind_slice = ind.iloc[:i+1]
-                if len(df_slice) < min_bars_needed:
+                if i + 1 < min_bars_needed:
                     continue
 
-                current_bar = df_slice.iloc[-1]
+                # NOTE: no longer unconditionally building df.iloc[:i+1] /
+                # ind.iloc[:i+1] here. That single line used to be the
+                # dominant cost of a full-universe backtest: as `i` grows
+                # through a trading session, df.iloc[:i+1] is an O(i)-sized
+                # COPY, built for every one of ~200 symbols at every single
+                # bar-event — effectively O(bars_per_day^2 * symbols) over a
+                # full session, which is exactly why a single-day backtest
+                # of a 1-minute-timeframe strategy (e.g.
+                # momentum_scalp_strategy.py, ~375 bars/day) could take
+                # 10-15 minutes. Below, only the current bar (O(1) row
+                # access) is read up front; a slice is only ever built where
+                # actually needed (open-position exit check, or the bounded
+                # strategy-evaluation window further down).
+                current_bar = df.iloc[i]
                 ltp = float(current_bar['close'])
                 bar_high = float(current_bar['high'])
                 bar_low = float(current_bar['low'])
@@ -3695,6 +4011,7 @@ class BacktestEngine:
                                 'entry_date': bar_dt.date(),
                                 'strategy': _pending['strategy'],
                                 'peak_price': _fill_price,
+                                'trade_place_reason': _pending.get('trade_place_reason'),
                             }
                             wallet -= _fill_price * _qty * margin_pct
                             logger.info(
@@ -3740,12 +4057,18 @@ class BacktestEngine:
 
                     # Mirrors live's _check_reversal_exit: give the strategy that
                     # opened this position a chance to say "my setup is
-                    # invalidated, get out now" ahead of target/SL. Evaluated on
-                    # the full df_slice/ind_slice (not the trimmed min_bars_needed
-                    # window) — same data shape _check_reversal_exit gets in live
-                    # (the full df/ind passed into _manage_open_position).
+                    # invalidated, get out now" ahead of target/SL. A strategy's
+                    # exit function may need full history behind this bar (e.g.
+                    # an EMA series), so — and ONLY here, since at most
+                    # MAX_OPEN_POS symbols can have an open position at any
+                    # given bar — build the full df.iloc[:i+1]/ind.iloc[:i+1]
+                    # slice. This is the same data shape _check_reversal_exit
+                    # gets in live (the full df/ind passed into
+                    # _manage_open_position).
                     _exit_fn = AVAILABLE_STRATEGY_EXITS.get(pos.get('strategy'))
                     if _exit_fn:
+                        df_slice = df.iloc[:i+1]
+                        ind_slice = ind.iloc[:i+1]
                         try:
                             _should_exit = _exit_fn(df_slice, ind_slice, pos)
                         except Exception as e:
@@ -3768,20 +4091,31 @@ class BacktestEngine:
                         )
                         PaperTradingEngine._update_trailing_stop(self, pos, ltp, move_pct, bar_mins)
 
-                        if pos['side'] == 'BUY':
-                            if bar_low <= pos['stoploss']:
-                                exit_price = self._slip(pos['stoploss'], exit_action)
-                                exit_reason = 'STOP_LOSS'
-                            elif bar_high >= pos['target']:
-                                exit_price = self._slip(pos['target'], exit_action)
-                                exit_reason = 'TARGET'
-                        else:
-                            if bar_high >= pos['stoploss']:
-                                exit_price = self._slip(pos['stoploss'], exit_action)
-                                exit_reason = 'STOP_LOSS'
-                            elif bar_low <= pos['target']:
-                                exit_price = self._slip(pos['target'], exit_action)
-                                exit_reason = 'TARGET'
+                        # Mirrors the live engine's opt-out in
+                        # _check_stop_loss_target: a strategy declaring
+                        # strategy_meta[...]['ignore_flat_sl_target'] = True
+                        # never gets closed by the flat target/stoploss
+                        # here in backtest either — only its own
+                        # strategy_exits function (checked above) can close
+                        # it. Kept in sync deliberately so a backtest run
+                        # of such a strategy matches what live/paper
+                        # trading will actually do with it.
+                        _meta = AVAILABLE_STRATEGY_META.get(pos.get('strategy'), {})
+                        if not _meta.get('ignore_flat_sl_target'):
+                            if pos['side'] == 'BUY':
+                                if bar_low <= pos['stoploss']:
+                                    exit_price = self._slip(pos['stoploss'], exit_action)
+                                    exit_reason = 'STOP_LOSS'
+                                elif bar_high >= pos['target']:
+                                    exit_price = self._slip(pos['target'], exit_action)
+                                    exit_reason = 'TARGET'
+                            else:
+                                if bar_high >= pos['stoploss']:
+                                    exit_price = self._slip(pos['stoploss'], exit_action)
+                                    exit_reason = 'STOP_LOSS'
+                                elif bar_low <= pos['target']:
+                                    exit_price = self._slip(pos['target'], exit_action)
+                                    exit_reason = 'TARGET'
 
                     if exit_price is not None:
                         _release(sym, pos, exit_price, exit_reason, bar_time)
@@ -3834,8 +4168,38 @@ class BacktestEngine:
                     if cooldown_elapsed < cooldown_window:
                         continue
 
-                df_w, ind_w = _session_anchored_window(df_slice, ind_slice, min_bars_needed)
-                b, s, _ = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
+                # Build the (bounded) strategy-evaluation window directly by
+                # position — no per-event date re-parsing (see
+                # _precompute_session_start_positions, computed ONCE per
+                # symbol above) and no intermediate df.iloc[:i+1] copy
+                # first. Strategies that declare SESSION_ANCHOR = False
+                # (e.g. momentum_scalp_strategy.py, which only ever looks at
+                # the last couple of candles) get a small constant-size
+                # trailing window all day; strategies that need the
+                # session's first candle (e.g. ORB — the default when a
+                # module doesn't declare SESSION_ANCHOR) still get it
+                # anchored to the start of today's session.
+                if session_anchor_enabled:
+                    session_start_i = sd['session_start_idx'][i]
+                    warmup_start_i = max(0, i + 1 - min_bars_needed)
+                    window_start = min(session_start_i, warmup_start_i)
+                else:
+                    window_start = max(0, i + 1 - min_bars_needed)
+                df_w = df.iloc[window_start:i + 1]
+                ind_w = ind.iloc[window_start:i + 1]
+                if secondary_timeframe and sym in secondary_data:
+                    # Truncate to only native candles that have genuinely
+                    # closed as of THIS simulated bar (bar_dt + 1 minute,
+                    # since bar_dt is this 1-minute bar's own start/open
+                    # time and it "closes" a minute later) — see
+                    # _secondary_bars_closed_by's docstring for why this
+                    # truncation is required here but not in live.
+                    _sec_closed = _secondary_bars_closed_by(
+                        secondary_data[sym], bar_dt + timedelta(minutes=1), secondary_timeframe
+                    )
+                    _attach_native_secondary_df(ind_w, _sec_closed)
+
+                b, s, _, all_triggered = _strat_votes(df_w, ind_w, self.strategies_dict, self.strategy_performance)
                 vtot = b + s
                 buy_pct = (b / vtot * 100) if vtot > 0 else 50.0
                 sell_pct = (s / vtot * 100) if vtot > 0 else 50.0
@@ -3878,32 +4242,34 @@ class BacktestEngine:
                 score = buy_pct if buy_ok else sell_pct
 
                 # Determine which individual strategies actually triggered on
-                # this bar and pick a "best" one, mirroring live's
+                # this bar (all_triggered already computed by _strat_votes
+                # above — no need to call every strategy function a second
+                # time) and pick a "best" one, mirroring live's
                 # direction_triggered/best_strategy logic. Purely for
                 # logging/labeling the trade — no longer used to gate
                 # anything.
-                all_triggered = []
-                for _name, _func in self.strategies_dict.items():
-                    try:
-                        if _func(df_w, ind_w):
-                            all_triggered.append(_name)
-                    except Exception:
-                        continue
                 direction_triggered = [
                     n for n in all_triggered
                     if AVAILABLE_STRATEGY_META.get(n, {}).get('direction', 'BOTH') in (side, 'BOTH')
                 ]
-                best_strategy = None
-                best_sc = -1
-                for _name in direction_triggered:
-                    _sc = 70 + len(direction_triggered) * 5
-                    if self._should_use_strategy(_name):
-                        _sc += 10
-                    if _sc > best_sc:
-                        best_sc = _sc
-                        best_strategy = _name
+                best_strategy = _pick_best_strategy(
+                    direction_triggered, self._should_use_strategy, self.strategy_performance
+                )
                 if not best_strategy:
                     best_strategy = "VOTE_SIGNAL"
+
+                # See AVAILABLE_STRATEGY_ENTRY_REASON docstring — computed
+                # against this same df_w/ind_w window the strategy just
+                # voted True on, so it reflects exactly what was true at
+                # signal time. Stored on the trade record so a historical
+                # backtest trade keeps showing its own entry conditions.
+                trade_place_reason = None
+                _reason_fn = AVAILABLE_STRATEGY_ENTRY_REASON.get(best_strategy)
+                if _reason_fn:
+                    try:
+                        trade_place_reason = _reason_fn(df_w, ind_w)
+                    except Exception as e:
+                        logger.debug(f"Entry-reason error {best_strategy} {sym}: {e}")
 
                 # Do NOT queue/fill yet. Collect this symbol as a candidate
                 # for THIS bar_time — every other symbol that also qualifies
@@ -3919,6 +4285,14 @@ class BacktestEngine:
                     'sym': sym, 'side': side, 'score': score,
                     'strategy': best_strategy, 'signal_i': i,
                     'signal_date': bar_dt.date(),
+                    'trade_place_reason': trade_place_reason,
+                    # Only used when fill_mode == 'signal_close' — this
+                    # bar's own OHLC, so the immediate fill below doesn't
+                    # need to re-look-up df.iloc[i] outside this loop.
+                    'signal_close': ltp,
+                    'signal_high': bar_high,
+                    'signal_low': bar_low,
+                    'bar_time': bar_time,
                 })
                 logger.debug(
                     f"  {sym} {side} candidate on breakout candle @ {bar_dt.strftime('%Y-%m-%d %H:%M')} "
@@ -3932,17 +4306,72 @@ class BacktestEngine:
                 entry_candidates.sort(key=lambda c: c['score'], reverse=True)
                 slots_free = max_open_pos - len(positions) - len(pending_entries)
                 for cand in entry_candidates[:max(0, slots_free)]:
-                    pending_entries[cand['sym']] = {
-                        'side': cand['side'],
-                        'strategy': cand['strategy'],
-                        'signal_i': cand['signal_i'],
-                        'signal_date': cand['signal_date'],
-                    }
-                    logger.debug(
-                        f"  {cand['sym']} {cand['side']} QUEUED (best-ranked of "
-                        f"{len(entry_candidates)} candidates @ {bar_dt.strftime('%Y-%m-%d %H:%M')}, "
-                        f"score={cand['score']:.1f}) — fill on next candle's open"
+                    if fill_mode == 'signal_close':
+                        # See _get_strategy_fill_mode's docstring — the
+                        # strategy's own rule already includes its wait
+                        # (e.g. momentum_scalp_strategy.py's 1-minute wait),
+                        # so fill right here at the signal bar's own close
+                        # instead of queuing an extra bar of delay.
+                        _side = cand['side']
+                        _close = cand['signal_close']
+                        _target, _stoploss = self._calculate_atr_targets(_close, _side)
+                        _margin_per_share = _close * margin_pct
+                        _qty = int((wallet * 0.8) / _margin_per_share) if _margin_per_share > 0 else 0
+                        if _qty > 0:
+                            _fill_price = self._slip(_close, _side)
+                            if _side == 'BUY':
+                                _fill_price = min(_fill_price, round(cand['signal_high'], 2))
+                            else:
+                                _fill_price = max(_fill_price, round(cand['signal_low'], 2))
+                            positions[cand['sym']] = {
+                                'side': _side,
+                                'entry_price': _fill_price,
+                                'qty': _qty,
+                                'target': _target,
+                                'stoploss': _stoploss,
+                                'entry_time': cand['bar_time'],
+                                'entry_date': bar_dt.date(),
+                                'strategy': cand['strategy'],
+                                'peak_price': _fill_price,
+                                'trade_place_reason': cand.get('trade_place_reason'),
+                            }
+                            wallet -= _fill_price * _qty * margin_pct
+                            logger.info(
+                                f"BACKTEST {_side} {cand['sym']} @ {bar_dt.strftime('%Y-%m-%d %H:%M')}  "
+                                f"(signal-close entry; strategy's own wait already elapsed)  "
+                                f"close={_close:.2f} fill={_fill_price:.2f}  qty={_qty}  "
+                                f"strategy={cand['strategy']}  target={_target:.2f}  sl={_stoploss:.2f}  "
+                                f"open_positions={len(positions)}/{max_open_pos}"
+                            )
+                        # else: sized to zero, drop silently (matches the
+                        # next-bar-open path's qty<=0 handling below)
+                    else:
+                        pending_entries[cand['sym']] = {
+                            'side': cand['side'],
+                            'strategy': cand['strategy'],
+                            'signal_i': cand['signal_i'],
+                            'signal_date': cand['signal_date'],
+                            'trade_place_reason': cand.get('trade_place_reason'),
+                        }
+                        logger.debug(
+                            f"  {cand['sym']} {cand['side']} QUEUED (best-ranked of "
+                            f"{len(entry_candidates)} candidates @ {bar_dt.strftime('%Y-%m-%d %H:%M')}, "
+                            f"score={cand['score']:.1f}) — fill on next candle's open"
+                        )
+
+            processed_groups += 1
+            if progress_cb and (time.time() - _last_progress_ts) > 1.0:
+                _last_progress_ts = time.time()
+                try:
+                    progress_cb(
+                        phase='simulating',
+                        done=processed_groups,
+                        total=total_bar_groups,
+                        current=f"{bar_dt.strftime('%Y-%m-%d %H:%M')}",
+                        trades_done=len(trades),
                     )
+                except Exception:
+                    pass
 
         for sym, pos in list(positions.items()):
             df = symbol_data[sym]['df']
@@ -4035,6 +4464,7 @@ class BacktestEngine:
             'date': entry_iso[:10] if entry_iso else '',
             'target': round(pos.get('target', 0), 2) if pos.get('target') is not None else None,
             'stoploss': round(pos.get('stoploss', 0), 2) if pos.get('stoploss') is not None else None,
+            'trade_place_reason': pos.get('trade_place_reason'),
         }
 
     def _fetch_nifty_context(self, kite, start, end):
@@ -4149,136 +4579,6 @@ class BacktestEngine:
                 sl = round(price * (1.0 + self.stoploss_pct), 2)
         return tgt, sl
 
-    def _check_entry_quality(self, df, ind, side, symbol, bar_dt, strategy_name=None):
-        """Exact port of PaperTradingEngine._check_entry_quality, adapted to
-        take the bar's timestamp (bar_dt) instead of datetime.now(). Live
-        vetoes an entry here (extension from VWAP, RSI overbought/oversold,
-        distance from EMA50, adverse candle pattern on the trigger bar)
-        AFTER the vote passes — backtest previously had no equivalent gate
-        at all, so it was taking every vote-qualified signal live would
-        actually reject. See the live method for full per-check rationale;
-        logic kept field-for-field identical here."""
-        try:
-            price = float(df['close'].iloc[-1])
-            now_mins = bar_dt.hour * 60 + bar_dt.minute
-
-            meta = AVAILABLE_STRATEGY_META.get(strategy_name, {})
-            category = meta.get('category', 'default')
-            skip_extension_checks = category in ('breakout', 'momentum')
-            # See matching comment in PaperTradingEngine._check_entry_quality
-            # — strategies that mark skip_quality_checks=True in their own
-            # strategy_meta bypass the volume-surge and candle-pattern
-            # vetoes entirely, not just the extension checks below. Without
-            # this, backtest silently rejected every single vote-qualified
-            # EMA_MOMENTUM_BUY/SELL signal (visible in the log as "BUY: ..."
-            # lines from the strategy firing, immediately followed by
-            # "BACKTEST COMPLETE: No trades executed" because none of them
-            # ever passed this gate).
-            if meta.get('skip_quality_checks'):
-                return True, None
-
-            def _iv(key, fallback=0.0):
-                try:
-                    v = float(ind[key].iloc[-1])
-                    return fallback if (isinstance(v, float) and np.isnan(v)) else v
-                except Exception:
-                    return fallback
-            ema50 = _iv('ema_50', price)
-            rsi = _iv('rsi', 50.0)
-            vwap = _iv('vwap', 0.0)
-            vwap_u1 = _iv('vwap_upper1', price * 1.02)
-            vwap_l1 = _iv('vwap_lower1', price * 0.98)
-            roc5 = _iv('roc5', 0.0)
-            htf_bull = _iv('htf_bull', 0.5)
-            atr = _iv('atr', 0.0)
-            avg_vol = float(df['volume'].iloc[-10:].mean()) if len(df) >= 10 else float(df['volume'].mean())
-            cur_vol = float(df['volume'].iloc[-1])
-            vol_mult = 1.0 if now_mins < 10*60 else 0.5 if now_mins < 13*60 else 0.4
-            if cur_vol < avg_vol * vol_mult:
-                return False, f"Low volume {int(cur_vol):,} < {int(avg_vol*vol_mult):,} ({vol_mult}x avg)"
-            if cur_vol < avg_vol * PaperTradingEngine.MIN_VOL_SURGE:
-                return False, f"Volume surge insufficient: {cur_vol/avg_vol:.1f}x < {PaperTradingEngine.MIN_VOL_SURGE}x"
-
-            cp = {}
-            try:
-                n = len(df) - 1
-                c = float(df['close'].iloc[n]); o = float(df['open'].iloc[n])
-                h = float(df['high'].iloc[n]); l = float(df['low'].iloc[n])
-                rng = max(h - l, 1e-9); body = abs(c - o); body_r = body / rng
-                uw_r = (h - max(c, o)) / rng; lw_r = (min(c, o) - l) / rng
-                bull = c >= o; bear = c < o
-                cp['DOJI'] = body_r < 0.10
-                cp['SPINNING_TOP'] = (0.10 <= body_r <= 0.30 and uw_r > 0.25 and lw_r > 0.25)
-                cp['HAMMER'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bull)
-                cp['INVERTED_HAMMER'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bull)
-                cp['SHOOTING_STAR'] = (uw_r > 0.60 and body_r < 0.30 and lw_r < 0.15 and bear)
-                cp['HANGING_MAN'] = (lw_r > 0.60 and body_r < 0.30 and uw_r < 0.15 and bear)
-                cp['BULL_MARUBOZU'] = (body_r > 0.85 and bull and uw_r < 0.08 and lw_r < 0.08)
-                cp['BEAR_MARUBOZU'] = (body_r > 0.85 and bear and uw_r < 0.08 and lw_r < 0.08)
-                if n >= 1:
-                    pc = float(df['close'].iloc[n-1]); po = float(df['open'].iloc[n-1])
-                    ph = float(df['high'].iloc[n-1]); pl = float(df['low'].iloc[n-1])
-                    pbull = pc > po; pbear = pc < po
-                    pb = abs(pc - po); pm = (po + pc) / 2.0
-                    cp['BULL_ENGULFING'] = (pbear and bull and o <= pc and c >= po and body >= pb)
-                    cp['BEAR_ENGULFING'] = (pbull and bear and o >= pc and c <= po and body >= pb)
-                    cp['PIERCING_LINE'] = (pbear and bull and o < pl and c > pm and c < po)
-                    cp['DARK_CLOUD_COVER'] = (pbull and bear and o > ph and c < pm and c > pc)
-                    cp['TWEEZER_TOP'] = (pbull and bear and abs(h - ph) / rng < 0.05)
-                    cp['TWEEZER_BOTTOM'] = (pbear and bull and abs(l - pl) / rng < 0.05)
-                if n >= 2:
-                    c2 = float(df['close'].iloc[n-2]); o2 = float(df['open'].iloc[n-2])
-                    c1 = float(df['close'].iloc[n-1]); o1 = float(df['open'].iloc[n-1])
-                    h1 = float(df['high'].iloc[n-1]); l1 = float(df['low'].iloc[n-1])
-                    rng1 = max(h1 - l1, 1e-9); body1 = abs(c1 - o1) / rng1
-                    mid2 = (o2 + c2) / 2.0
-                    cp['MORNING_STAR'] = (c2 < o2 and body1 < 0.30 and bull and c > mid2)
-                    cp['EVENING_STAR'] = (c2 > o2 and body1 < 0.30 and bear and c < mid2)
-                    cp['THREE_WHITE_SOLDIERS'] = (c2 > o2 and c1 > o1 and bull and c1 > c2 and c > c1 and body_r > 0.50)
-                    cp['THREE_BLACK_CROWS'] = (c2 < o2 and c1 < o1 and bear and c1 < c2 and c < c1 and body_r > 0.50)
-            except Exception:
-                pass
-
-            if side == 'BUY':
-                bearish_veto = ['SHOOTING_STAR','EVENING_STAR','BEAR_ENGULFING','DARK_CLOUD_COVER','HANGING_MAN','THREE_BLACK_CROWS','BEAR_MARUBOZU','TWEEZER_TOP']
-                triggered = [p for p in bearish_veto if cp.get(p)]
-                if triggered:
-                    return False, f"Bearish candle pattern on trigger bar: {', '.join(triggered)}"
-            if side == 'SELL':
-                bullish_veto = ['HAMMER','MORNING_STAR','BULL_ENGULFING','PIERCING_LINE','INVERTED_HAMMER','THREE_WHITE_SOLDIERS','BULL_MARUBOZU','TWEEZER_BOTTOM']
-                triggered = [p for p in bullish_veto if cp.get(p)]
-                if triggered:
-                    return False, f"Bullish candle pattern on trigger bar: {', '.join(triggered)}"
-
-            if not skip_extension_checks:
-                if side == 'BUY':
-                    if vwap_u1 > 0 and price > vwap_u1 and roc5 > 1.5:
-                        return False, f"Price extended above VWAP+1sigma ({price:.2f} > {vwap_u1:.2f}) ROC5={roc5:.1f}%"
-                    if atr > 0 and vwap > 0 and (price - vwap) > 2.0 * atr:
-                        return False, f"Price > 2xATR above VWAP ({price:.2f} vs {vwap:.2f})"
-                if side == 'SELL':
-                    if vwap_l1 > 0 and price < vwap_l1 and roc5 < -1.5:
-                        return False, f"Price extended below VWAP-1sigma ({price:.2f} < {vwap_l1:.2f}) ROC5={roc5:.1f}%"
-                    if atr > 0 and vwap > 0 and (vwap - price) > 2.0 * atr:
-                        return False, f"Price > 2xATR below VWAP ({price:.2f} vs {vwap:.2f})"
-                if side == 'BUY' and rsi > 72 and htf_bull > 0.85:
-                    return False, f"Overbought — RSI {rsi:.1f} > 72, HTF bull {htf_bull:.2f} > 0.85"
-                if side == 'SELL' and rsi < 28 and htf_bull < 0.15:
-                    return False, f"Oversold — RSI {rsi:.1f} < 28, HTF bull {htf_bull:.2f} < 0.15"
-                if side == 'BUY' and ema50 > 0 and price < ema50 * 0.98:
-                    return False, f"BUY price {price:.2f} >2% below EMA50 {ema50:.2f} — counter-trend"
-                if side == 'SELL' and ema50 > 0 and price > ema50 * 1.02:
-                    return False, f"SELL price {price:.2f} >2% above EMA50 {ema50:.2f} — counter-trend"
-                if side == 'BUY' and rsi > 75:
-                    return False, f"BUY into overbought RSI {rsi:.1f} > 75"
-                if side == 'SELL' and rsi < 25:
-                    return False, f"SELL into oversold RSI {rsi:.1f} < 25"
-                if side == 'SELL' and vwap > 0 and price < vwap * 0.99:
-                    return False, f"SELL already below VWAP ({price:.2f} < {vwap:.2f}) — chasing down"
-
-            return True, None
-        except Exception:
-            return True, None
 
 # ==================== FLASK APP ====================
 app = Flask(__name__)
@@ -4622,6 +4922,16 @@ def get_user_engines():
         return None, None, None, None
     kite = UserManager.get_kite(user_id)
     pe = UserManager.get_paper_engine(user_id)
+    # Keep the already-running engine's kite reference in sync with the
+    # current, valid token. get_paper_engine() only wires up pe._kite the
+    # FIRST time the engine is created for this user (inside pe.start());
+    # after that pe is cached for the life of the process, so if the user
+    # re-logs-in later (new access_token -> UserManager._kites[user_id]
+    # replaced), the engine's monitor loop was left holding the old, dead
+    # KiteConnect object and every scan call failed with Kite's own
+    # 'Incorrect api_key or access_token' TokenException. Re-assigning it
+    # on every request is cheap (plain attribute set) and self-healing.
+    pe._kite = kite
     sector = UserManager.get_sector_monitor(user_id)
     return user_id, kite, pe, sector
 
