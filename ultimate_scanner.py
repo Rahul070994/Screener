@@ -19,7 +19,7 @@
 #                                       (guards against stale/false
 #                                       signals discovered by the time the
 #                                       rest of the scan finishes).
-#   • _monitor_loop() now scans the WHOLE NIFTY 200 universe every cycle,
+#   • _monitor_loop() now scans the NIFTY 100 universe every cycle,
 #     collects every qualifying entry candidate, ranks them by score, and
 #     only executes the top N (N = free position slots) — instead of the
 #     old "first symbol found in scan order wins the slot" behavior.
@@ -45,6 +45,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
 import webbrowser, os, time, json, threading, sys, importlib
+import concurrent.futures
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from markupsafe import escape
 import warnings, traceback, shutil, glob
@@ -298,6 +299,26 @@ NIFTY200_SYMBOLS = get_index_symbols(
 )
 _seen = set()
 NIFTY200_SYMBOLS = [s for s in NIFTY200_SYMBOLS if not (s in _seen or _seen.add(s))]
+
+# Real, current NIFTY 100 universe — same fetch/cache pattern as
+# NIFTY200_SYMBOLS above, via NSE's official CSV (modules/index_universe.py
+# already defines the NIFTY100 URL). Used to scope the BACKTEST engine's
+# stock universe down from the full NIFTY 200 (see BacktestEngine.run /
+# run_backtest route), and by PaperTradingEngine._monitor_loop for live
+# scanning as well, so live and backtest both scan the same universe.
+#
+# Fallback list here is approximate (a truncated slice of the NIFTY 200
+# fallback, since we don't maintain a separately-curated NIFTY 100 hard-
+# coded list) — like NIFTY200's fallback, this ONLY fires if NSE is
+# unreachable AND there's no disk cache yet; NSE's live CSV is the real
+# source of truth in normal operation.
+NIFTY100_SYMBOLS = get_index_symbols(
+    "NIFTY100",
+    cache_dir=os.path.join(BASE_DIR, "data"),
+    fallback_symbols=_NIFTY200_FALLBACK_SYMBOLS[:100],
+)
+_seen100 = set()
+NIFTY100_SYMBOLS = [s for s in NIFTY100_SYMBOLS if not (s in _seen100 or _seen100.add(s))]
 
 TRADE_SLOTS = [
     (9*60+15,  14*60+30),
@@ -1622,7 +1643,7 @@ class PaperTradingEngine:
     # actually spans hours of history instead of a couple of minutes.
     BACKUP_INTERVAL_SECONDS = 300
     # Scan-then-pick-best entry flow (see _evaluate_entry_signal /
-    # _confirm_and_execute_best / _monitor_loop): a full NIFTY 200 scan
+    # _confirm_and_execute_best / _monitor_loop): a full NIFTY 100 scan
     # pass takes real wall-clock time, so by the time the best-ranked
     # candidate is actually about to be executed, price may have moved
     # from what it was when the signal was first captured. This caps how
@@ -1818,7 +1839,7 @@ class PaperTradingEngine:
                     data = json.load(f)
                 # NOTE: 'pinned'/'pinned_meta' are vestigial — the Monitored/
                 # pin feature was removed (the engine now always scans the
-                # full NIFTY 200 universe, see NIFTY200_SYMBOLS). These keys
+                # full NIFTY 100 universe, see NIFTY100_SYMBOLS). These keys
                 # are kept only so old paper_*.json files from before this
                 # change still load without a KeyError; nothing reads or
                 # writes them anymore.
@@ -3210,7 +3231,7 @@ class PaperTradingEngine:
                 if is_wday and self.MARKET_OPEN <= mins <= self.MARKET_CLOSE:
                     with self._lock:
                         positions = list(self.data.get("positions", {}).keys())
-                    universe = [s for s in NIFTY200_SYMBOLS if s in SYMBOL_MAP]
+                    universe = [s for s in NIFTY100_SYMBOLS if s in SYMBOL_MAP]
                     all_syms = list(set(universe + positions))
                     if all_syms:
                         try:
@@ -3228,7 +3249,7 @@ class PaperTradingEngine:
                     for sym in positions:
                         self._manage_open_position(sym, self._kite, prefetched_ltp=batch_prices.get(sym))
 
-                    # Phase B: scan the FULL NIFTY 200 universe for
+                    # Phase B: scan the FULL NIFTY 100 universe for
                     # qualifying entry signals, collect every candidate
                     # (instead of firing on whichever symbol happens to
                     # qualify first in scan order), rank by score, and
@@ -3260,7 +3281,7 @@ class PaperTradingEngine:
 
                     check_counter += 1
                     if check_counter % 30 == 0:
-                        logger.info(f"Monitoring {len(universe)} NIFTY 200 stocks + {len(positions)} positions  |  batch_ltp covered {len(all_syms)} symbols")
+                        logger.info(f"Monitoring {len(universe)} NIFTY 100 stocks + {len(positions)} positions  |  batch_ltp covered {len(all_syms)} symbols")
                     error_count = 0
 
                 if (now - last_health).total_seconds() > 60:
@@ -3374,7 +3395,7 @@ class PaperTradingEngine:
             'loss_trades': len(losses),
             'win_rate': round(len(wins) / len(trades) * 100, 1) if trades else 0,
             'open_positions': len(pos_detail),
-            'universe_count': len(NIFTY200_SYMBOLS),
+            'universe_count': len(NIFTY100_SYMBOLS),
             'positions': pos_detail,
             'daily_pnl': daily_pnl,
             'today_pnl': today_stats.get('realized', 0),
@@ -3762,17 +3783,52 @@ class BacktestEngine:
             logger.warning("NIFTY context unavailable — regime/correlation gates disabled for this run")
 
         symbol_data = {}
-        for _sym_idx, sym in enumerate(stock_universe):
-            if progress_cb:
-                try:
-                    progress_cb(phase='fetching', done=_sym_idx, total=total_syms, current=sym)
-                except Exception:
-                    pass
+        # FETCH-PHASE PARALLELIZATION
+        # ----------------------------
+        # This used to be a plain sequential `for` loop: one
+        # kite.historical_data() round-trip per symbol, one after another.
+        # For a full NIFTY200 universe on a 1-minute timeframe (the
+        # heaviest interval per call), that's ~200 sequential network
+        # round-trips PLUS whatever _hist_limiter throttling kicks in on
+        # top — which is exactly why a "1-day, 1-minute-strategy" backtest
+        # could take 15-20 minutes despite the simulation phase itself
+        # being O(n) per symbol (see the O(n^2) fix note further down in
+        # this file re: df.iloc[:i+1]). That cost was never in the
+        # simulation loop — it was 100% serial I/O wait in this fetch loop.
+        #
+        # Fix: fetch symbols concurrently with a small bounded thread pool.
+        # This is safe because:
+        #   - historical_data() is I/O-bound (waiting on Kite's HTTP
+        #     response), so threads (not processes) are the right tool —
+        #     the GIL is a non-issue since threads spend their time
+        #     blocked on network I/O, not CPU work.
+        #   - every worker still funnels its call through the SAME
+        #     `_hist_limiter` instance (thread-safe via its internal Lock),
+        #     so Kite's real rate limit (3 calls/sec, 170/min) is still
+        #     enforced globally across all workers combined — this does
+        #     NOT bypass or race past the limiter, it just lets multiple
+        #     symbols' network latency overlap instead of stacking.
+        #   - symbol_data (the shared results dict) is only ever written
+        #     from the main thread as futures complete, never concurrently
+        #     from worker threads, so no additional locking is needed there.
+        #
+        # _FETCH_WORKERS is deliberately modest (well under the limiter's
+        # 3-calls/sec ceiling in steady state) — raising it further won't
+        # help much once the limiter itself is the bottleneck, and an
+        # overly large pool just wastes threads waiting on the limiter's
+        # lock. Tune if your Kite plan/latency profile differs.
+        # Raised from 6 -> 18: observed per-call latency for this Kite
+        # endpoint is ~6-7s, so 6 workers only sustained ~0.9 calls/sec —
+        # well under _hist_limiter's ~2.83 calls/sec (170/min) ceiling.
+        # 18 workers at ~6.7s/call ≈ 2.7 calls/sec, close to saturating
+        # the limiter itself, which is the real floor here (Kite's own
+        # rate limit, not thread count). Tune down if you see 429s/
+        # rate-limit warnings in the log at this level.
+        _FETCH_WORKERS = 18
 
+        def _fetch_one_symbol(sym):
             if sym not in symbol_map:
-                logger.debug(f"SKIP {sym}: not in symbol_map")
-                continue
-
+                return sym, None, "not in symbol_map"
             token = symbol_map[sym]['token']
             try:
                 data = _fetch_historical_chunked(
@@ -3786,6 +3842,37 @@ class BacktestEngine:
                 # live trading, manufacturing trades that couldn't have
                 # happened at that exact timestamp and skewing win-rate.
                 data = _drop_forming_candle(data, strat_timeframe, datetime.now())
+                return sym, data, None
+            except Exception as e:
+                return sym, None, e
+
+        _done_count = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as _pool:
+            _futures = {_pool.submit(_fetch_one_symbol, sym): sym for sym in stock_universe}
+            for _future in concurrent.futures.as_completed(_futures):
+                sym = _futures[_future]
+                _done_count += 1
+                if progress_cb:
+                    try:
+                        progress_cb(phase='fetching', done=_done_count, total=total_syms, current=sym)
+                    except Exception:
+                        pass
+
+                try:
+                    _sym, data, err = _future.result()
+                except Exception as e:
+                    logger.error(f"Backtest fetch error on {sym}: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    continue
+
+                if err is not None:
+                    if err == "not in symbol_map":
+                        logger.debug(f"SKIP {sym}: not in symbol_map")
+                    else:
+                        logger.error(f"Backtest fetch error on {sym}: {err}")
+                    continue
+
                 if data:
                     _first_dt = data[0].get('date')
                     _last_dt = data[-1].get('date')
@@ -3810,10 +3897,6 @@ class BacktestEngine:
                 dt_series = pd.to_datetime(df['date']) if 'date' in df.columns else pd.to_datetime(df.index.to_series().reset_index(drop=True))
                 symbol_data[sym] = {'df': df, 'ind': ind, 'dt': dt_series}
                 logger.debug(f"Processing {sym}: {len(df)} bars, indicators loaded")
-            except Exception as e:
-                logger.error(f"Backtest fetch error on {sym}: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
 
         # Optional SECOND, genuinely-native timeframe fetch (see
         # _get_strategy_secondary_timeframe) — e.g.
@@ -4870,9 +4953,12 @@ def run_backtest():
     strategy_name, strategies_dict = UserManager.get_user_strategy(user_id)
 
     symbol_map = get_symbol_map()
-    stock_universe = [s for s in NIFTY200_SYMBOLS if s in symbol_map]
+    # Scoped to NIFTY 100 (not the full NIFTY 200 used by live scanning) —
+    # see NIFTY100_SYMBOLS definition for why: it roughly halves backtest
+    # fetch-phase volume on top of the thread-pool parallelization above.
+    stock_universe = [s for s in NIFTY100_SYMBOLS if s in symbol_map]
     if not stock_universe:
-        return jsonify({'status': 'error', 'msg': 'NIFTY 200 symbol universe unavailable — check symbol map / broker connection'}), 400
+        return jsonify({'status': 'error', 'msg': 'NIFTY 100 symbol universe unavailable — check symbol map / broker connection'}), 400
 
     existing = UserManager._backtest_engines.get(user_id)
     if existing and existing._running:
@@ -4954,7 +5040,7 @@ def index():
     return render_template_string(HTML,
         content=content,
         all_symbols=sorted(symbol_map.keys()),
-        universe_count=len(NIFTY200_SYMBOLS),
+        universe_count=len(NIFTY100_SYMBOLS),
         available_strategies=strategy_names,
         current_strategy=current_strategy,
         current_mode=current_mode,
@@ -5235,7 +5321,7 @@ def gen_paper_tab(pe):
         'Full-universe scan → best signal wins (no panel gates)'
         '</div></div>'
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;width:100%">'
-        '<span class="b bg-gold" id="bannerUniverseBadge"><i class="fas fa-chart-line"></i> ' + str(len(NIFTY200_SYMBOLS)) + ' NIFTY 200</span>'
+        '<span class="b bg-gold" id="bannerUniverseBadge"><i class="fas fa-chart-line"></i> ' + str(len(NIFTY100_SYMBOLS)) + ' NIFTY 100</span>'
         '<span class="b ' + ('bb' if smry['open_positions'] > 0 else 'bn') + '" id="bannerOpenBadge">' + str(smry['open_positions']) + ' Open</span>'
         '<span class="b bb" id="bannerWinBadge">' + str(smry['win_trades']) + ' ✅</span>'
         '<span class="b bs" id="bannerLossBadge">' + str(smry['loss_trades']) + ' ❌</span>'
@@ -5272,7 +5358,7 @@ def main():
     print("=" * 65)
     print("  🧠 Available strategies: " + ", ".join(AVAILABLE_STRATEGIES.keys()))
     print("  📈 All strategies use pure vote-based scoring (no strategy-specific panels)")
-    print("  🎯 Each cycle scans the FULL NIFTY 200, ranks every qualifying signal, and")
+    print("  🎯 Each cycle scans the FULL NIFTY 100, ranks every qualifying signal, and")
     print("     only executes the best-ranked one(s) — same rule live and backtest both use.")
     print("  📊 Signal logs auto‑delete after 5000 entries.")
     print("=" * 65)
